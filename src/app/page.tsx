@@ -15,10 +15,10 @@ export default function Home() {
   }, [loadProjectsFromStorage])
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-[#1a0b2e] text-white">
+    <>
       {currentScreen === 'hub' && <ProjectHub />}
       {currentScreen === 'setup' && <ProjectSetup />}
       {currentScreen === 'app' && <MainApp />}
-    </div>
+    </>
   )
 }
