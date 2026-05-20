@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Users,
   CheckCircle2,
@@ -24,14 +24,10 @@ import { useToast } from '@/hooks/use-toast'
 // ── Theme constants ──────────────────────────────────────────────
 const BG = 'bg-[#1a0b2e]'
 const PANEL = 'bg-[#2a164a]'
-const CARD = 'bg-[#3b2263]'
 const BORDER = 'border-[#533485]'
 const GOLD = '#d4af37'
-const GOLD_TEXT = 'text-[#d4af37]'
 const MUTED = 'text-[#c4b5fd]'
 const CYAN = '#06b6d4'
-const CYAN_TEXT = 'text-[#06b6d4]'
-const GREEN_ACCENT = 'text-emerald-400'
 
 // ── Helper: sanitize nama for filenames ──────────────────────────
 function sanitizeNama(nama: string): string {
@@ -57,11 +53,25 @@ interface OpProgressData {
 }
 
 interface PhotosSavedData {
-  historyItem: PhotoHistoryItem
+  student: Student
+  photos: string[]
+  channel: number
 }
 
 interface SyncDbData {
-  database: Student[]
+  project: {
+    id: string
+    name: string
+    config: {
+      mode: 'single' | 'dual'
+      ratio: string
+      preset: string
+      targetFolder: string
+      frame: string | null
+    }
+    database: Student[]
+    photoHistory: PhotoHistoryItem[]
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -112,24 +122,37 @@ export default function AdminDashboard() {
 
     const handlePhotosSaved = (data: PhotosSavedData) => {
       if (!currentProject) return
+
+      // Build the history item from the data
+      const historyItem: PhotoHistoryItem = {
+        student: data.student,
+        photos: data.photos,
+        channel: data.channel,
+      }
+
+      // Check if this student already has a history entry
       const existing = currentProject.photoHistory.findIndex(
         (h) =>
-          h.student.id === data.historyItem.student.id &&
-          h.channel === data.historyItem.channel,
+          h.student.id === data.student.id &&
+          h.channel === data.channel,
       )
       let newHistory: PhotoHistoryItem[]
       if (existing !== -1) {
         newHistory = [...currentProject.photoHistory]
-        newHistory[existing] = data.historyItem
+        newHistory[existing] = historyItem
       } else {
-        newHistory = [...currentProject.photoHistory, data.historyItem]
+        newHistory = [...currentProject.photoHistory, historyItem]
       }
       updateCurrentProject({ ...currentProject, photoHistory: newHistory })
     }
 
     const handleSyncDb = (data: SyncDbData) => {
       if (!currentProject) return
-      updateCurrentProject({ ...currentProject, database: data.database })
+      updateCurrentProject({
+        ...currentProject,
+        database: data.project.database,
+        photoHistory: data.project.photoHistory,
+      })
     }
 
     onLocal('MC_CALL', handleMcCall)
@@ -159,7 +182,6 @@ export default function AdminDashboard() {
               })
             },
             () => {
-              // Fallback: select from a temporary input
               const textarea = document.createElement('textarea')
               textarea.value = url
               document.body.appendChild(textarea)
@@ -173,7 +195,6 @@ export default function AdminDashboard() {
             },
           )
         } else {
-          // Fallback for non-HTTPS contexts
           const textarea = document.createElement('textarea')
           textarea.value = url
           document.body.appendChild(textarea)
@@ -396,7 +417,7 @@ export default function AdminDashboard() {
 
   // ── Render: Photo History Item ───────────────────────────────────
   const renderPhotoItem = (item: PhotoHistoryItem, index: number) => {
-    const { student, channel } = item
+    const { student, channel, photos } = item
     const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
     const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
 
@@ -436,8 +457,12 @@ export default function AdminDashboard() {
         <div className="flex gap-2">
           {/* Toga */}
           <div className="flex flex-1 flex-col gap-1">
-            <div className="flex h-14 items-center justify-center rounded-md bg-[#2a164a]/80 border border-[#533485]/30">
-              <ImageIcon className="size-5 text-[#533485]" />
+            <div className="flex h-16 items-center justify-center overflow-hidden rounded-md bg-[#2a164a]/80 border border-[#533485]/30">
+              {photos[0] ? (
+                <img src={photos[0]} alt="Toga" className="h-full w-full object-cover" />
+              ) : (
+                <ImageIcon className="size-5 text-[#533485]" />
+              )}
             </div>
             <span className="truncate text-[10px] text-[#c4b5fd]/60" title={togaFilename}>
               {togaFilename}
@@ -445,8 +470,12 @@ export default function AdminDashboard() {
           </div>
           {/* Ijazah */}
           <div className="flex flex-1 flex-col gap-1">
-            <div className="flex h-14 items-center justify-center rounded-md bg-[#2a164a]/80 border border-[#533485]/30">
-              <ImageIcon className="size-5 text-[#533485]" />
+            <div className="flex h-16 items-center justify-center overflow-hidden rounded-md bg-[#2a164a]/80 border border-[#533485]/30">
+              {photos[1] ? (
+                <img src={photos[1]} alt="Ijazah" className="h-full w-full object-cover" />
+              ) : (
+                <ImageIcon className="size-5 text-[#533485]" />
+              )}
             </div>
             <span className="truncate text-[10px] text-[#c4b5fd]/60" title={ijazahFilename}>
               {ijazahFilename}
@@ -474,7 +503,7 @@ export default function AdminDashboard() {
           </Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 min-h-0 pt-0">
+      <CardContent className="flex-1 min-h-0 pt-0 overflow-hidden">
         {photoHistory.length === 0 ? (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 py-8">
             <div className="flex size-16 items-center justify-center rounded-full bg-[#3b2263]/50">
@@ -489,7 +518,7 @@ export default function AdminDashboard() {
             </div>
           </div>
         ) : (
-          <ScrollArea className="h-[calc(100vh-240px)] min-h-[200px]">
+          <ScrollArea className="h-full">
             <div className="grid grid-cols-1 gap-3 pr-2 sm:grid-cols-2">
               {photoHistory.map((item, idx) => renderPhotoItem(item, idx))}
             </div>
@@ -501,17 +530,17 @@ export default function AdminDashboard() {
 
   // ── Main render ──────────────────────────────────────────────────
   return (
-    <div className={`${BG} min-h-screen w-full p-4 md:p-6`}>
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:gap-6">
+    <div className={`${BG} h-full w-full p-4 md:p-6 overflow-hidden`}>
+      <div className="mx-auto flex h-full max-w-7xl flex-col gap-4 md:flex-row md:gap-6">
         {/* ── Left Column (1/3) ── */}
-        <div className="flex w-full flex-col gap-4 md:w-1/3">
+        <div className="flex w-full flex-col gap-4 md:w-1/3 shrink-0 overflow-y-auto custom-scroll">
           {renderStatusPanel()}
           {renderLiveCommandCenter()}
           {renderLanAccess()}
         </div>
 
         {/* ── Right Column (2/3) ── */}
-        <div className="w-full md:w-2/3">
+        <div className="w-full md:w-2/3 min-h-0 flex-1">
           {renderPhotoGallery()}
         </div>
       </div>

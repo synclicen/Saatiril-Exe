@@ -411,11 +411,11 @@ export default function ProjectSetup() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="relative min-h-screen bg-[#1a0b2e] backdrop-blur-sm">
+    <div className="relative h-full bg-[#1a0b2e] backdrop-blur-sm overflow-hidden">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#1a0b2e] via-[#2a164a]/30 to-[#1a0b2e]" />
 
-      <div className="relative z-10 flex min-h-screen flex-col">
+      <div className="relative z-10 flex h-full flex-col">
         {/* ── Header ─────────────────────────────────────────────────────────── */}
         <header className="flex items-center gap-4 border-b border-[#533485]/50 px-6 py-4">
           <Button

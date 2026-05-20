@@ -177,7 +177,7 @@ export function McPanel() {
     )
   }
 
-  const getRowStyle = (student: Student, index: number): React.CSSProperties => {
+  const getRowStyle = (student: Student): React.CSSProperties => {
     const isActive = student.status === `active_${myChannel}`
     const isNext = student.id === nextPending?.id && student.status === 'pending'
     const isDone = student.status === 'done'
@@ -205,7 +205,6 @@ export function McPanel() {
       }
     }
 
-    // Regular pending
     return {
       backgroundColor: THEME.panel,
       borderLeft: `4px solid ${THEME.border}`,
@@ -241,7 +240,6 @@ export function McPanel() {
       )
     }
 
-    // pending
     return (
       <Badge
         className="text-[10px] px-1.5 py-0"
@@ -270,7 +268,7 @@ export function McPanel() {
   }
 
   return (
-    <div className="flex flex-col gap-4 h-full p-4" style={{ backgroundColor: THEME.bg }}>
+    <div className="flex flex-col gap-3 h-full p-3" style={{ backgroundColor: THEME.bg }}>
       {/* ── Top: Call Panel ──────────────────────────────────────────────── */}
       <Card
         className="shrink-0 border-2 rounded-xl"
@@ -331,7 +329,7 @@ export function McPanel() {
       >
         {/* Header */}
         <div
-          className="shrink-0 flex items-center justify-between px-4 py-3"
+          className="shrink-0 flex items-center justify-between px-4 py-2.5"
           style={{ borderBottom: `1px solid ${THEME.border}` }}
         >
           <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
@@ -347,7 +345,7 @@ export function McPanel() {
 
         {/* Column headers */}
         <div
-          className="shrink-0 grid grid-cols-[40px_100px_1fr_90px] gap-2 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider"
+          className="shrink-0 grid grid-cols-[36px_90px_1fr_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider"
           style={{
             backgroundColor: THEME.panel,
             color: THEME.muted,
@@ -386,8 +384,8 @@ export function McPanel() {
                           ? nextRowRef
                           : undefined
                     }
-                    className="grid grid-cols-[40px_100px_1fr_90px] gap-2 items-center px-4 py-2.5 transition-colors duration-200"
-                    style={getRowStyle(student, idx)}
+                    className="grid grid-cols-[36px_90px_1fr_80px] gap-2 items-center px-4 py-2 transition-colors duration-200"
+                    style={getRowStyle(student)}
                   >
                     {/* Row number */}
                     <span

@@ -27,6 +27,7 @@ import {
   Video,
   VideoOff,
   Aperture,
+  Frame,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -142,11 +143,30 @@ export function OperatorPanel() {
   const nextRowRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const selectedDeviceRef = useRef<string>('')
+  const frameImgRef = useRef<HTMLImageElement | null>(null)
 
   // ── Derived config ───────────────────────────────────────────────────────
   const config = currentProject?.config
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
+  const frameData = config?.frame ?? null
+
+  // ── Preload frame image ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (frameData) {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        frameImgRef.current = img
+      }
+      img.onerror = () => {
+        frameImgRef.current = null
+      }
+      img.src = frameData
+    } else {
+      frameImgRef.current = null
+    }
+  }, [frameData])
 
   // ── Derived data ─────────────────────────────────────────────────────────
   const channelStudents = useMemo<Student[]>(() => {
@@ -169,7 +189,7 @@ export function OperatorPanel() {
 
   const hasActiveTarget = opCurrentTarget !== null
 
-  // ── Computed capture phase (derived, not stored) ─────────────────────────
+  // ── Computed capture phase ───────────────────────────────────────────────
   const capturePhase = useMemo<CapturePhase>(() => {
     if (sending) return 'sending'
     if (!hasActiveTarget) return 'standby'
@@ -189,7 +209,6 @@ export function OperatorPanel() {
   // ── Camera: enumerate devices ────────────────────────────────────────────
   const enumerateVideoDevices = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-      console.warn('[SAATIRIL OP] mediaDevices API not available (requires HTTPS)')
       return
     }
     try {
@@ -201,7 +220,6 @@ export function OperatorPanel() {
           label: d.label || `Kamera ${d.deviceId.slice(0, 6)}`,
         }))
       setVideoDevices(videoInputs)
-      // Auto-select first device if none selected
       if (videoInputs.length > 0 && !selectedDeviceRef.current) {
         setSelectedDeviceId(videoInputs[0].deviceId)
         selectedDeviceRef.current = videoInputs[0].deviceId
@@ -215,12 +233,10 @@ export function OperatorPanel() {
   const startCamera = useCallback(
     async (deviceId?: string) => {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-        console.warn('[SAATIRIL OP] mediaDevices API not available (requires HTTPS)')
         setCameraAvailable(false)
         return
       }
 
-      // Stop existing tracks first
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
@@ -238,12 +254,10 @@ export function OperatorPanel() {
         streamRef.current = stream
         setCameraAvailable(true)
 
-        // Attach to video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream
         }
 
-        // Re-enumerate to get labels (labels are only available after permission)
         await enumerateVideoDevices()
       } catch (err) {
         console.error('[SAATIRIL OP] Camera access failed:', err)
@@ -254,12 +268,10 @@ export function OperatorPanel() {
   )
 
   // ── Camera: initialize on mount ──────────────────────────────────────────
-  // startCamera internally calls setState (setCameraAvailable) which is valid
-  // here as it's initializing an external system (camera hardware)
   useEffect(() => {
-    void startCamera() // eslint-disable-line react-hooks/set-state-in-effect
+    // Use microtask to avoid synchronous setState in effect body
+    queueMicrotask(() => void startCamera())
     return () => {
-      // Cleanup: stop all tracks on unmount
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
@@ -271,7 +283,8 @@ export function OperatorPanel() {
   useEffect(() => {
     if (selectedDeviceId && selectedDeviceRef.current !== selectedDeviceId) {
       selectedDeviceRef.current = selectedDeviceId
-      void startCamera(selectedDeviceId) // eslint-disable-line react-hooks/set-state-in-effect
+      // Defer to avoid synchronous setState in effect
+      queueMicrotask(() => void startCamera(selectedDeviceId))
     }
   }, [selectedDeviceId, startCamera])
 
@@ -297,7 +310,6 @@ export function OperatorPanel() {
     }
   }, [currentProject, myChannel, setOpCurrentTarget])
 
-  // Recover on mount
   useEffect(() => {
     recoverOperatorState()
   }, [recoverOperatorState])
@@ -324,7 +336,6 @@ export function OperatorPanel() {
         database: data.project.database,
       }
       updateCurrentProject(updatedProject)
-      // Attempt state recovery after sync
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === myChannel && isActiveStatus(s.status),
       )
@@ -339,7 +350,7 @@ export function OperatorPanel() {
     }
   }, [currentProject, myChannel, setOpCurrentTarget, updateCurrentProject])
 
-  // ── Finalize capture (must be declared before handleCapture) ─────────────
+  // ── Finalize capture ────────────────────────────────────────────────────
   const finalizeCapture = useCallback(
     (canvas: HTMLCanvasElement) => {
       // Trigger flash animation
@@ -350,7 +361,7 @@ export function OperatorPanel() {
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       addOpCapturedPhoto(dataUrl)
 
-      const photoCount = opCapturedPhotos.length // 0 before this photo, so 0 = first capture
+      const photoCount = opCapturedPhotos.length // 0 before this photo
 
       if (photoCount === 0) {
         // After 1st photo — emit progress
@@ -376,21 +387,32 @@ export function OperatorPanel() {
         updateStudentStatus(student.id, 'done')
         saveProjectsToStorage()
 
-        // Emit events
+        // Emit PHOTOS_SAVED with the correct data shape that admin expects
         emitLocal('PHOTOS_SAVED', {
-          student,
+          student: { ...student },
           photos: allPhotos,
           channel: myChannel,
         })
 
         // Get the updated project from store after status update
-        // We use a timeout to let Zustand state propagate
         setTimeout(() => {
           const store = useSaatirilStore.getState()
           if (store.currentProject) {
+            // Check if this history item already exists (from PHOTOS_SAVED handler)
+            const existingIdx = store.currentProject.photoHistory.findIndex(
+              (h) => h.student.id === student.id && h.channel === myChannel
+            )
+            let newHistory: PhotoHistoryItem[]
+            if (existingIdx !== -1) {
+              newHistory = [...store.currentProject.photoHistory]
+              newHistory[existingIdx] = historyItem
+            } else {
+              newHistory = [...store.currentProject.photoHistory, historyItem]
+            }
+
             const updatedProject = {
               ...store.currentProject,
-              photoHistory: [...store.currentProject.photoHistory, historyItem],
+              photoHistory: newHistory,
             }
             store.updateCurrentProject(updatedProject)
             emitLocal('SYNC_DB', { project: updatedProject })
@@ -398,7 +420,6 @@ export function OperatorPanel() {
 
           setSending(false)
 
-          // Reset operator state after delay
           setTimeout(() => {
             resetOpState()
           }, 500)
@@ -450,11 +471,9 @@ export function OperatorPanel() {
       let sh = videoHeight
 
       if (videoRatio > aspectRatio) {
-        // Video is wider — crop sides
         sw = videoHeight * aspectRatio
         sx = (videoWidth - sw) / 2
       } else {
-        // Video is taller — crop top/bottom
         sh = videoWidth / aspectRatio
         sy = (videoHeight - sh) / 2
       }
@@ -480,8 +499,12 @@ export function OperatorPanel() {
       ctx.fillText('NO CAMERA SIGNAL', targetWidth / 2, targetHeight / 2)
     }
 
-    // Draw frame overlay if configured
-    if (config?.frame) {
+    // Draw frame overlay if available (use preloaded image)
+    if (frameImgRef.current) {
+      ctx.drawImage(frameImgRef.current, 0, 0, targetWidth, targetHeight)
+      finalizeCapture(canvas)
+    } else if (frameData) {
+      // Frame is configured but not loaded yet — try loading it
       const frameImg = new Image()
       frameImg.crossOrigin = 'anonymous'
       frameImg.onload = () => {
@@ -489,14 +512,13 @@ export function OperatorPanel() {
         finalizeCapture(canvas)
       }
       frameImg.onerror = () => {
-        // If frame fails to load, continue without it
         finalizeCapture(canvas)
       }
-      frameImg.src = config.frame
+      frameImg.src = frameData
     } else {
       finalizeCapture(canvas)
     }
-  }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, config, finalizeCapture])
+  }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture])
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
@@ -604,13 +626,13 @@ export function OperatorPanel() {
 
   return (
     <div
-      className="flex flex-col lg:flex-row gap-4 h-full p-4"
+      className="flex flex-col lg:flex-row gap-3 h-full p-3"
       style={{ backgroundColor: THEME.bg }}
     >
       {/* ═══════════════════════════════════════════════════════════════════════
           LEFT COLUMN — Camera Area (2/3)
       ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col gap-3 lg:w-2/3 min-h-0">
+      <div className="flex flex-col gap-2 lg:w-2/3 min-h-0">
         {/* ── Target Info Panel ──────────────────────────────────────────── */}
         <Card
           className="shrink-0 border-2 rounded-xl transition-all duration-300"
@@ -621,20 +643,20 @@ export function OperatorPanel() {
             boxShadow: hasActiveTarget ? `0 0 20px ${THEME.gold}22` : 'none',
           }}
         >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-4">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-3">
               {/* Avatar */}
               <div
-                className="shrink-0 flex items-center justify-center w-12 h-12 rounded-full border-2"
+                className="shrink-0 flex items-center justify-center w-10 h-10 rounded-full border-2"
                 style={{
                   backgroundColor: THEME.panel,
                   borderColor: hasActiveTarget ? THEME.gold : THEME.border,
                 }}
               >
                 {hasActiveTarget ? (
-                  <User className="size-6" style={{ color: THEME.gold }} />
+                  <User className="size-5" style={{ color: THEME.gold }} />
                 ) : (
-                  <User className="size-6" style={{ color: THEME.border }} />
+                  <User className="size-5" style={{ color: THEME.border }} />
                 )}
               </div>
 
@@ -642,37 +664,35 @@ export function OperatorPanel() {
               <div className="flex-1 min-w-0">
                 {hasActiveTarget ? (
                   <>
-                    <p className="text-lg font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                    <p className="text-base font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
                       {opCurrentTarget.nama}
                     </p>
-                    <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+                    <p className="text-xs font-mono" style={{ color: THEME.muted }}>
                       {opCurrentTarget.nim}
                     </p>
                   </>
                 ) : (
-                  <>
-                    <p className="text-sm italic" style={{ color: THEME.muted }}>
-                      Menunggu panggilan MC...
-                    </p>
-                  </>
+                  <p className="text-sm italic" style={{ color: THEME.muted }}>
+                    Menunggu panggilan MC...
+                  </p>
                 )}
               </div>
 
               {/* Camera Source Dropdown */}
-              <div className="shrink-0">
+              <div className="shrink-0 hidden sm:block">
                 <Select
                   value={selectedDeviceId}
                   onValueChange={setSelectedDeviceId}
                 >
                   <SelectTrigger
-                    className="w-[180px] text-xs"
+                    className="w-[160px] text-xs h-8"
                     style={{
                       backgroundColor: THEME.panel,
                       borderColor: THEME.border,
                       color: THEME.muted,
                     }}
                   >
-                    <Video className="size-3.5 mr-1.5 shrink-0" style={{ color: THEME.gold }} />
+                    <Video className="size-3 mr-1.5 shrink-0" style={{ color: THEME.gold }} />
                     <SelectValue placeholder="Pilih Kamera" />
                   </SelectTrigger>
                   <SelectContent
@@ -750,18 +770,14 @@ export function OperatorPanel() {
             }}
           >
             {/* Video wrapper maintaining aspect ratio */}
-            <div
-              className="absolute inset-0 flex items-center justify-center"
-              style={{
-                padding: '8px',
-              }}
-            >
+            <div className="absolute inset-0 flex items-center justify-center p-2">
               <div
-                className="relative w-full h-full flex items-center justify-center"
+                className="relative flex items-center justify-center"
                 style={{
                   aspectRatio: `${aspectRatio}`,
                   maxHeight: '100%',
                   maxWidth: '100%',
+                  width: '100%',
                 }}
               >
                 <video
@@ -776,15 +792,25 @@ export function OperatorPanel() {
                   }}
                 />
 
+                {/* Frame overlay preview on camera */}
+                {frameData && (
+                  <img
+                    src={frameData}
+                    alt="Frame overlay"
+                    className="absolute inset-0 w-full h-full object-fill rounded-lg pointer-events-none"
+                    style={{ zIndex: 5 }}
+                  />
+                )}
+
                 {/* Rule of thirds grid overlay */}
-                <div className="absolute inset-0 pointer-events-none rounded-lg">
+                <div className="absolute inset-0 pointer-events-none rounded-lg" style={{ zIndex: 6 }}>
                   {/* Vertical lines */}
                   <div
                     className="absolute top-0 bottom-0"
                     style={{
                       left: '33.333%',
                       width: '1px',
-                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                     }}
                   />
                   <div
@@ -792,7 +818,7 @@ export function OperatorPanel() {
                     style={{
                       left: '66.666%',
                       width: '1px',
-                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                     }}
                   />
                   {/* Horizontal lines */}
@@ -801,7 +827,7 @@ export function OperatorPanel() {
                     style={{
                       top: '33.333%',
                       height: '1px',
-                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                     }}
                   />
                   <div
@@ -809,7 +835,7 @@ export function OperatorPanel() {
                     style={{
                       top: '66.666%',
                       height: '1px',
-                      backgroundColor: 'rgba(255,255,255,0.15)',
+                      backgroundColor: 'rgba(255,255,255,0.12)',
                     }}
                   />
                 </div>
@@ -842,6 +868,25 @@ export function OperatorPanel() {
 
             {/* Hidden canvas for photo capture */}
             <canvas ref={canvasRef} className="hidden" />
+
+            {/* Aspect ratio & frame indicator */}
+            <div className="absolute top-2 left-2 flex gap-1.5" style={{ zIndex: 10 }}>
+              <Badge
+                className="text-[9px] px-1.5 py-0.5 border-0"
+                style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.muted }}
+              >
+                {config?.ratio ?? '4:3'}
+              </Badge>
+              {frameData && (
+                <Badge
+                  className="text-[9px] px-1.5 py-0.5 border-0"
+                  style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}
+                >
+                  <Frame className="size-2.5 mr-0.5" />
+                  Frame
+                </Badge>
+              )}
+            </div>
           </div>
         </div>
 
@@ -850,7 +895,7 @@ export function OperatorPanel() {
           {capturePhase === 'standby' && (
             <Button
               disabled
-              className="w-full h-16 text-lg font-bold cursor-not-allowed rounded-xl"
+              className="w-full h-14 text-base font-bold cursor-not-allowed rounded-xl"
               style={{
                 backgroundColor: THEME.panel,
                 color: THEME.muted,
@@ -866,7 +911,7 @@ export function OperatorPanel() {
           {capturePhase === 'ready-1' && (
             <Button
               onClick={handleCapture}
-              className="w-full h-16 text-lg font-bold cursor-pointer rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+              className="w-full h-14 text-base font-bold cursor-pointer rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
               style={{
                 backgroundColor: THEME.gold,
                 color: THEME.bg,
@@ -882,7 +927,7 @@ export function OperatorPanel() {
           {capturePhase === 'ready-2' && (
             <Button
               onClick={handleCapture}
-              className="w-full h-16 text-lg font-bold cursor-pointer rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+              className="w-full h-14 text-base font-bold cursor-pointer rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
               style={{
                 backgroundColor: '#22c55e',
                 color: '#ffffff',
@@ -898,7 +943,7 @@ export function OperatorPanel() {
           {capturePhase === 'sending' && (
             <Button
               disabled
-              className="w-full h-16 text-lg font-bold cursor-not-allowed rounded-xl"
+              className="w-full h-14 text-base font-bold cursor-not-allowed rounded-xl"
               style={{
                 backgroundColor: THEME.panel,
                 color: THEME.muted,
@@ -922,7 +967,7 @@ export function OperatorPanel() {
         >
           {/* Header */}
           <div
-            className="shrink-0 flex items-center justify-between px-4 py-3"
+            className="shrink-0 flex items-center justify-between px-3 py-2.5"
             style={{ borderBottom: `1px solid ${THEME.border}` }}
           >
             <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
@@ -938,7 +983,7 @@ export function OperatorPanel() {
 
           {/* Column headers */}
           <div
-            className="shrink-0 grid grid-cols-[32px_80px_1fr_80px] gap-1 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider"
+            className="shrink-0 grid grid-cols-[28px_70px_1fr_70px] gap-1 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
             style={{
               backgroundColor: THEME.panel,
               color: THEME.muted,
@@ -976,22 +1021,22 @@ export function OperatorPanel() {
                             ? nextRowRef
                             : undefined
                       }
-                      className="grid grid-cols-[32px_80px_1fr_80px] gap-1 items-center px-3 py-2 transition-colors duration-200"
+                      className="grid grid-cols-[28px_70px_1fr_70px] gap-1 items-center px-3 py-1.5 transition-colors duration-200"
                       style={getRowStyle(student)}
                     >
                       {/* Row number */}
-                      <span className="text-[11px] font-mono" style={{ color: THEME.muted }}>
+                      <span className="text-[10px] font-mono" style={{ color: THEME.muted }}>
                         {idx + 1}
                       </span>
 
                       {/* NIM */}
-                      <span className="text-[11px] font-mono truncate" style={{ color: THEME.muted }}>
+                      <span className="text-[10px] font-mono truncate" style={{ color: THEME.muted }}>
                         {student.nim}
                       </span>
 
                       {/* Name */}
                       <span
-                        className={`text-xs font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
+                        className={`text-[11px] font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
                         style={{
                           color: isActive
                             ? THEME.gold

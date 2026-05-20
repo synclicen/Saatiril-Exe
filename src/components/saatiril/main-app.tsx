@@ -75,13 +75,11 @@ export function MainApp() {
   const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  // Track whether non-admin has received project data from admin via socket
   const [syncedFromServer, setSyncedFromServer] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualMode = currentProject?.config.mode === 'dual'
-  // Admin is always "synced" (has the data). MC/Operator must wait for SYNC_DB.
   const isSynced = myRole === 'admin' || syncedFromServer
   const effectiveTab: AppTab = useMemo(() => {
     if (myRole === 'admin') return currentTab
@@ -116,7 +114,6 @@ export function MainApp() {
     socket.on('connect', handleConnect)
     socket.on('disconnect', handleDisconnect)
 
-    // Check initial state via microtask to avoid synchronous setState in effect
     queueMicrotask(() => {
       if (socket.connected) {
         setServerConnected(true)
@@ -131,7 +128,6 @@ export function MainApp() {
 
   // ── Socket event listeners ────────────────────────────────────────────────
   useEffect(() => {
-    // When non-admin receives project data from admin
     const handleSyncDb = (data: { project: Project }) => {
       if (myRole !== 'admin' && data.project) {
         updateCurrentProject(data.project)
@@ -139,14 +135,12 @@ export function MainApp() {
       }
     }
 
-    // When someone requests state (admin responds)
     const handleRequestState = () => {
       if (myRole === 'admin' && currentProject) {
         emitLocal('SYNC_DB', { project: currentProject })
       }
     }
 
-    // Admin also listens for SYNC_DB to keep its own state in sync
     const handleAdminSyncDb = (data: { project: Project }) => {
       if (myRole === 'admin' && data.project) {
         updateCurrentProject(data.project)
@@ -165,14 +159,12 @@ export function MainApp() {
   // ── Non-admin: request state sync on mount ────────────────────────────────
   useEffect(() => {
     if (myRole !== 'admin') {
-      // Emit REQUEST_STATE to ask admin for project data
       const requestInterval = setInterval(() => {
         if (!isSynced) {
           emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
         }
       }, 2000)
 
-      // Fire immediately
       emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
 
       return () => clearInterval(requestInterval)
@@ -204,7 +196,7 @@ export function MainApp() {
   if (!isSynced && myRole !== 'admin') {
     return (
       <div
-        className="flex min-h-screen flex-col items-center justify-center gap-6 px-6"
+        className="flex h-full flex-col items-center justify-center gap-6 px-6"
         style={{ backgroundColor: THEME.bg }}
       >
         <div className="flex size-20 items-center justify-center rounded-full border-2 border-[#533485] bg-[#2a164a]">
@@ -244,18 +236,18 @@ export function MainApp() {
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
-    <div className="flex min-h-screen flex-col" style={{ backgroundColor: THEME.bg }}>
+    <div className="flex h-full flex-col" style={{ backgroundColor: THEME.bg }}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header
-        className="sticky top-0 z-20 border-b backdrop-blur-sm"
+        className="shrink-0 border-b backdrop-blur-sm z-20"
         style={{
           backgroundColor: `${THEME.panel}ee`,
           borderColor: THEME.border,
         }}
       >
-        <div className="mx-auto flex max-w-7xl flex-col gap-0">
+        <div className="flex flex-col gap-0">
           {/* Top row: back, project name, badge, server status */}
-          <div className="flex items-center gap-3 px-4 py-3 sm:gap-4 sm:px-6">
+          <div className="flex items-center gap-3 px-4 py-2.5 sm:gap-4 sm:px-6">
             {/* Back button */}
             <Button
               variant="ghost"
@@ -314,7 +306,7 @@ export function MainApp() {
                 }}
               />
               <span className="hidden text-[10px] font-medium sm:inline" style={{ color: THEME.muted }}>
-                LAN Server Aktif
+                LAN Server
               </span>
             </div>
           </div>
@@ -329,7 +321,7 @@ export function MainApp() {
                     key={tab.id}
                     onClick={() => handleTabChange(tab.id)}
                     className={`
-                      flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold
+                      flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold
                       transition-all duration-200 sm:text-sm
                       ${
                         isActive
@@ -400,10 +392,10 @@ export function MainApp() {
       </header>
 
       {/* ── Main Content Area ───────────────────────────────────────────────── */}
-      <main className="flex-1">
+      <main className="flex-1 min-h-0 overflow-hidden">
         <div
           key={effectiveTab}
-          className="animate-in fade-in slide-in-from-y-2 duration-300"
+          className="h-full animate-in fade-in slide-in-from-y-2 duration-300"
         >
           {renderTabContent()}
         </div>
@@ -411,13 +403,13 @@ export function MainApp() {
 
       {/* ── Footer (sticky to bottom) ───────────────────────────────────────── */}
       <footer
-        className="mt-auto border-t"
+        className="shrink-0 border-t"
         style={{
           backgroundColor: `${THEME.panel}88`,
           borderColor: `${THEME.border}44`,
         }}
       >
-        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
+        <div className="px-4 py-2 sm:px-6">
           <p
             className="text-center font-mono text-[10px] tracking-widest sm:text-xs"
             style={{ color: `${THEME.muted}66` }}
