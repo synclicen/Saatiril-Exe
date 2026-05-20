@@ -75,17 +75,14 @@ export function MainApp() {
   const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  // Initialize isSynced: if role param is present and not admin, start unsynced
-  const [isSynced, setIsSynced] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true
-    const params = new URLSearchParams(window.location.search)
-    const roleParam = params.get('role')
-    return roleParam !== 'mc' && roleParam !== 'operator'
-  })
+  // Track whether non-admin has received project data from admin via socket
+  const [syncedFromServer, setSyncedFromServer] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualMode = currentProject?.config.mode === 'dual'
+  // Admin is always "synced" (has the data). MC/Operator must wait for SYNC_DB.
+  const isSynced = myRole === 'admin' || syncedFromServer
   const effectiveTab: AppTab = useMemo(() => {
     if (myRole === 'admin') return currentTab
     if (myRole === 'mc') return 'mc'
@@ -138,7 +135,7 @@ export function MainApp() {
     const handleSyncDb = (data: { project: Project }) => {
       if (myRole !== 'admin' && data.project) {
         updateCurrentProject(data.project)
-        setIsSynced(true)
+        setSyncedFromServer(true)
       }
     }
 

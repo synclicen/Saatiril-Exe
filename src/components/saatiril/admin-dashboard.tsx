@@ -149,15 +149,31 @@ export default function AdminDashboard() {
   const copyLink = useCallback(
     (role: string, channel: number) => {
       const url = `${window.location.origin}/?role=${role}&channel=${channel}`
-      navigator.clipboard.writeText(url).then(
-        () => {
-          toast({
-            title: 'Link disalin!',
-            description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-          })
-        },
-        () => {
-          // Fallback: select from a temporary input
+      try {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(url).then(
+            () => {
+              toast({
+                title: 'Link disalin!',
+                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
+              })
+            },
+            () => {
+              // Fallback: select from a temporary input
+              const textarea = document.createElement('textarea')
+              textarea.value = url
+              document.body.appendChild(textarea)
+              textarea.select()
+              document.execCommand('copy')
+              document.body.removeChild(textarea)
+              toast({
+                title: 'Link disalin!',
+                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
+              })
+            },
+          )
+        } else {
+          // Fallback for non-HTTPS contexts
           const textarea = document.createElement('textarea')
           textarea.value = url
           document.body.appendChild(textarea)
@@ -168,8 +184,14 @@ export default function AdminDashboard() {
             title: 'Link disalin!',
             description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
           })
-        },
-      )
+        }
+      } catch {
+        toast({
+          title: 'Gagal menyalin',
+          description: 'Tidak dapat menyalin link. Silakan salin manual.',
+          variant: 'destructive',
+        })
+      }
     },
     [toast],
   )

@@ -188,6 +188,10 @@ export function OperatorPanel() {
 
   // ── Camera: enumerate devices ────────────────────────────────────────────
   const enumerateVideoDevices = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+      console.warn('[SAATIRIL OP] mediaDevices API not available (requires HTTPS)')
+      return
+    }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoInputs = devices
@@ -210,6 +214,12 @@ export function OperatorPanel() {
   // ── Camera: start stream ─────────────────────────────────────────────────
   const startCamera = useCallback(
     async (deviceId?: string) => {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+        console.warn('[SAATIRIL OP] mediaDevices API not available (requires HTTPS)')
+        setCameraAvailable(false)
+        return
+      }
+
       // Stop existing tracks first
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
@@ -267,6 +277,7 @@ export function OperatorPanel() {
 
   // ── Camera: listen for device changes ────────────────────────────────────
   useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) return
     const handler = () => enumerateVideoDevices()
     navigator.mediaDevices.addEventListener('devicechange', handler)
     return () => {
