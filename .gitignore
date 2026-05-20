@@ -56,4 +56,8 @@ server.log
 /electron/build/
 
 # Skills directory
-/skills/
+/skills/# Database (auto-generated)
+db/*.db
+
+# Dev scripts
+.zscripts/
