@@ -8,20 +8,11 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
-    "build:ci": "next build",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
+    "build": "next build",
     "lint": "eslint .",
-    "db:push": "prisma db push",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset",
     "electron:dev": "concurrently \"bun run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "bun run build && electron-builder",
-    "electron:build:win": "bun run build && electron-builder --win",
-    "electron:build:mac": "bun run build && electron-builder --mac",
-    "electron:build:linux": "bun run build && electron-builder --linux",
-    "electron:dist": "bun run build && electron-builder --publish never"
+    "electron:build": "bun run build && electron-builder --win --publish never",
+    "electron:dist": "bun run build && electron-builder --win --publish never"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -82,6 +73,7 @@
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
     "sharp": "^0.34.3",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",

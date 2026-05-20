@@ -1,41 +1,20 @@
-# SAATIRIL — GitHub Actions CI/CD
-# Builds Electron desktop apps for Windows, macOS, and Linux
-# Triggered on push to main branch and manual dispatch
+# SAATIRIL — GitHub Actions CI/CD (Windows Only)
+# Builds Electron desktop app for Windows
 
-name: Build SAATIRIL Desktop
+name: Build SAATIRIL Windows
 
 on:
   push:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version override (e.g., 1.0.0)'
-        required: false
-        default: ''
 
 permissions:
   contents: write
 
 jobs:
-  # ─── Build job ──────────────────────────────────────────────────────────────
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-            artifact: SAATIRIL-Setup
-          - os: macos-latest
-            platform: mac
-            artifact: SAATIRIL-macOS
-          - os: ubuntu-22.04
-            platform: linux
-            artifact: SAATIRIL-Linux
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       # ── Checkout ──────────────────────────────────────────────────────────
@@ -48,111 +27,39 @@ jobs:
         with:
           bun-version: latest
 
-      # ── Setup Node.js (for Electron build) ───────────────────────────────
+      # ── Setup Node.js ─────────────────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # ── Linux dependencies ────────────────────────────────────────────────
-      - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libxtst6 xauth xvfb libasound2-dev libgbm-dev
-
-      # ── Generate app icons ────────────────────────────────────────────────
-      - name: Generate Electron icons
-        shell: bash
-        run: |
-          mkdir -p electron/build
-          # Use Node.js to generate a simple PNG icon from SVG
-          node -e "
-          const fs = require('fs');
-          const { execSync } = require('child_process');
-
-          // Create a simple 512x512 PNG icon using sharp
-          const svgBuffer = Buffer.from(\`<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'>
-            <rect width='512' height='512' rx='80' fill='#1a0b2e'/>
-            <rect x='40' y='40' width='432' height='432' rx='60' fill='#2a164a' stroke='#d4af37' stroke-width='4'/>
-            <circle cx='256' cy='220' r='100' fill='none' stroke='#d4af37' stroke-width='12'/>
-            <circle cx='256' cy='220' r='40' fill='#d4af37'/>
-            <rect x='156' y='340' width='200' height='8' rx='4' fill='#d4af37'/>
-            <text x='256' y='430' font-family='sans-serif' font-size='48' font-weight='bold' fill='#d4af37' text-anchor='middle'>SAATIRIL</text>
-          </svg>\`);
-
-          try {
-            const sharp = require('sharp');
-            // Generate multiple sizes
-            sharp(svgBuffer).resize(256, 256).png().toFile('electron/build/icon.png').then(() => {
-              console.log('Icon generated with sharp');
-            });
-          } catch(e) {
-            // Fallback: write SVG as icon (electron-builder supports SVG)
-            fs.writeFileSync('electron/build/icon.svg', svgBuffer);
-            console.log('Using SVG fallback for icon');
-          }
-          "
-
-          # Try to convert SVG to PNG with sharp if available
-          npx -y sharp-cli -i electron/build/icon.svg -o electron/build/icon.png resize 512 512 2>/dev/null || true
-
-          # If no PNG was created, use the SVG
-          if [ ! -f electron/build/icon.png ]; then
-            echo "No PNG icon, will use SVG fallback"
-            ls -la electron/build/
-          fi
-
       # ── Install dependencies ──────────────────────────────────────────────
-      - name: Install main project dependencies
+      - name: Install dependencies
         run: bun install
 
-      - name: Install Socket.io server dependencies
-        run: cd mini-services/saatiril-socket && bun install
-
-      # ── Build Next.js ────────────────────────────────────────────────────
-      - name: Build Next.js (standalone)
-        run: bun run build:ci
+      # ── Build Next.js (static export) ─────────────────────────────────────
+      - name: Build Next.js (static export)
+        run: bun run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
 
-      # ── Copy static files for standalone (cross-platform) ────────────────
-      - name: Copy static files for standalone
-        shell: bash
-        run: |
-          cp -r .next/static .next/standalone/.next/ 2>/dev/null || xcopy /E /I /Y .next\\static .next\\standalone\\.next\\static
-          cp -r public .next/standalone/ 2>/dev/null || xcopy /E /I /Y public .next\\standalone\\public
-
-      # ── Install Electron builder ─────────────────────────────────────────
+      # ── Install Electron ──────────────────────────────────────────────────
       - name: Install Electron
         run: bun add -d electron electron-builder
 
-      # ── Build Electron app ───────────────────────────────────────────────
-      - name: Build Electron app (Windows)
-        if: matrix.platform == 'win'
+      # ── Build Electron app (Windows NSIS installer) ───────────────────────
+      - name: Build Electron app
         run: npx electron-builder --win --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Electron app (macOS)
-        if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Electron app (Linux)
-        if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── Upload artifacts ──────────────────────────────────────────────────
+      # ── Upload artifact ───────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist-electron/*.*
-          retention-days: 30
+          name: SAATIRIL-Setup
+          path: dist-electron/*.exe
+          retention-days: 90
 
   # ─── Release job (only on version tags) ─────────────────────────────────────
   release:
@@ -161,29 +68,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Download all artifacts
-      - name: Download Windows artifact
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: SAATIRIL-Setup
           path: release/
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: SAATIRIL-macOS
-          path: release/
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: SAATIRIL-Linux
-          path: release/
-
-      # Create GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -192,20 +82,17 @@ jobs:
             ## SAATIRIL — Sistem Auto Track Input Raw into Live
 
             ### 📦 Download
-            - **Windows**: `SAATIRIL-Setup-x.x.x.exe` — Installer untuk Windows
-            - **macOS**: `SAATIRIL-x.x.x.dmg` — Installer untuk macOS
-            - **Linux**: `SAATIRIL-x.x.x.AppImage` — Portable untuk Linux
+            Download `SAATIRIL-Setup-x.x.x.exe` lalu install.
 
             ### 🚀 Cara Penggunaan
-            1. Download installer sesuai sistem operasi
-            2. Install dan jalankan SAATIRIL
-            3. Pastikan semua perangkat terhubung ke jaringan WiFi/LAN yang sama
-            4. Perangkat lain bisa akses melalui IP yang ditampilkan di aplikasi
+            1. Download dan install SAATIRIL
+            2. Jalankan aplikasi — kamera otomatis terdeteksi
+            3. Untuk multi-perangkat, buka browser di perangkat lain dan akses IP yang ditampilkan
 
             ### 📋 Persyaratan
+            - Windows 10/11 (64-bit)
             - Kamera USB atau webcam
             - Jaringan LAN/WiFi untuk koneksi multi-perangkat
-            - Browser modern (untuk perangkat yang mengakses via web)
           files: release/*.*
           draft: false
           prerelease: false

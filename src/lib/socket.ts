@@ -8,6 +8,33 @@ export type LocalNetworkCallback = (data: any) => void
 
 const listeners: Record<string, LocalNetworkCallback[]> = {}
 
+/**
+ * Get the Socket.io server URL.
+ * 
+ * In Electron desktop mode:
+ *   - Read socketPort from URL query parameter (passed by Electron main process)
+ *   - Connect directly to localhost:PORT (no Caddy gateway)
+ *
+ * In web/sandbox mode:
+ *   - Use XTransformPort=3003 for Caddy gateway routing
+ */
+function getSocketUrl(): string {
+  if (typeof window === 'undefined') return '/'
+  
+  // Check if running in Electron
+  const isElectron = !!(window as any).saatirilAPI?.isElectron
+  
+  if (isElectron) {
+    // Electron: read socketPort from URL params, connect directly
+    const params = new URLSearchParams(window.location.search)
+    const port = params.get('socketPort') || '3003'
+    return `http://localhost:${port}`
+  }
+  
+  // Web/sandbox mode: use Caddy gateway with XTransformPort
+  return '/'
+}
+
 export function getSocket(): Socket | null {
   return socket
 }
@@ -15,14 +42,30 @@ export function getSocket(): Socket | null {
 export function connectSocket(): Socket {
   if (socket?.connected) return socket
 
-  socket = io('/?XTransformPort=3003', {
-    transports: ['websocket', 'polling'],
-    forceNew: true,
-    reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 1000,
-    timeout: 10000,
-  })
+  const socketUrl = getSocketUrl()
+  const isElectron = !!(window as any).saatirilAPI?.isElectron
+
+  const socketOptions = isElectron
+    ? {
+        // Electron: connect directly to Socket.io server
+        transports: ['websocket', 'polling'],
+        forceNew: true,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 2000,
+        timeout: 10000,
+      }
+    : {
+        // Web/sandbox: use Caddy gateway
+        transports: ['websocket', 'polling'],
+        forceNew: true,
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000,
+        timeout: 10000,
+      }
+
+  socket = io(socketUrl, socketOptions)
 
   socket.on('connect', () => {
     console.log('[SAATIRIL] Socket connected:', socket?.id)

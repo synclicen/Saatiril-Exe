@@ -1,29 +1,31 @@
 /**
- * SAATIRIL — Electron Main Process
+ * SAATIRIL — Electron Main Process (Windows Desktop)
  *
- * This is the entry point for the Electron desktop application.
- * It starts both the Next.js server and the Socket.io relay server,
- * then opens a BrowserWindow pointing to the local Next.js app.
+ * Architecture: NO Next.js server needed!
+ * - Next.js is built as static HTML/JS/CSS (output: 'export')
+ * - Electron loads files via custom protocol (saatiril://)
+ * - Socket.io server runs IN-PROCESS (no child process, no port 3000!)
+ * - Socket.io port is auto-detected and passed to renderer
  *
- * Other devices on the LAN can connect to this machine's IP:3000
- * (Next.js) and IP:3003 (Socket.io) to join the session.
+ * This eliminates ALL port conflict issues.
  */
 
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, shell, protocol, net } = require('electron')
 const path = require('path')
-const { spawn } = require('child_process')
 const os = require('os')
-const net = require('net')
+const { createServer } = require('http')
+const { Server } = require('socket.io')
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-const NEXT_PORT = 3000
-const SOCKET_PORT = 3003
 const isDev = !app.isPackaged
+const STATIC_DIR = isDev
+  ? path.join(__dirname, '..', 'out')
+  : path.join(process.resourcesPath, 'app')
 
-// Keep references to child processes so we can kill them on quit
-let nextServerProcess = null
-let socketServerProcess = null
 let mainWindow = null
+let io = null
+let httpServer = null
+let socketPort = 3003
 
 // ─── Utility: Get local network IPs ─────────────────────────────────────────
 function getLocalIPs() {
@@ -31,7 +33,6 @@ function getLocalIPs() {
   const ips = []
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
-      // Skip internal and non-IPv4 addresses
       if (iface.family === 'IPv4' && !iface.internal) {
         ips.push({ name, address: iface.address })
       }
@@ -40,135 +41,72 @@ function getLocalIPs() {
   return ips
 }
 
-// ─── Utility: Wait for a port to be available ───────────────────────────────
-function waitForPort(port, host = 'localhost', timeout = 30000) {
+// ─── Find available port ────────────────────────────────────────────────────
+function findAvailablePort(startPort) {
   return new Promise((resolve, reject) => {
-    const start = Date.now()
-    const tryConnect = () => {
-      const socket = new net.Socket()
-      socket.setTimeout(1000)
-      socket.on('connect', () => {
-        socket.destroy()
-        resolve()
+    const net = require('net')
+    const tryPort = (port) => {
+      const server = net.createServer()
+      server.listen(port, '127.0.0.1', () => {
+        server.close(() => resolve(port))
       })
-      socket.on('error', () => {
-        socket.destroy()
-        if (Date.now() - start > timeout) {
-          reject(new Error(`Timeout waiting for port ${port}`))
+      server.on('error', () => {
+        if (port < startPort + 100) {
+          tryPort(port + 1)
         } else {
-          setTimeout(tryConnect, 500)
+          reject(new Error('No available port found'))
         }
       })
-      socket.on('timeout', () => {
-        socket.destroy()
-        if (Date.now() - start > timeout) {
-          reject(new Error(`Timeout waiting for port ${port}`))
-        } else {
-          setTimeout(tryConnect, 500)
-        }
-      })
-      socket.connect(port, host)
     }
-    tryConnect()
+    tryPort(startPort)
   })
 }
 
-// ─── Start Next.js server ───────────────────────────────────────────────────
-async function startNextServer() {
-  if (isDev) {
-    console.log('[SAATIRIL Electron] Dev mode: Next.js server should already be running on port', NEXT_PORT)
-    return
-  }
-
-  const standaloneDir = path.join(process.resourcesPath, 'standalone')
-  const serverPath = path.join(standaloneDir, 'server.js')
-
-  console.log('[SAATIRIL Electron] Starting Next.js server from:', serverPath)
-
-  nextServerProcess = spawn(process.execPath, [serverPath], {
-    cwd: standaloneDir,
-    env: {
-      ...process.env,
-      PORT: String(NEXT_PORT),
-      HOSTNAME: '0.0.0.0',
-      NODE_ENV: 'production',
+// ─── Register custom protocol for serving static files ──────────────────────
+// This must be called BEFORE app.ready
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'saatiril',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  },
+])
 
-  nextServerProcess.stdout.on('data', (data) => {
-    console.log('[Next.js]', data.toString().trim())
-  })
-
-  nextServerProcess.stderr.on('data', (data) => {
-    console.error('[Next.js]', data.toString().trim())
-  })
-
-  nextServerProcess.on('error', (err) => {
-    console.error('[SAATIRIL Electron] Next.js server error:', err)
-  })
-
-  nextServerProcess.on('exit', (code) => {
-    console.log('[SAATIRIL Electron] Next.js server exited with code:', code)
-  })
-
-  // Wait for the server to be ready
-  try {
-    await waitForPort(NEXT_PORT, 'localhost', 30000)
-    console.log('[SAATIRIL Electron] Next.js server is ready on port', NEXT_PORT)
-  } catch (err) {
-    console.error('[SAATIRIL Electron] Failed to start Next.js server:', err)
-    dialog.showErrorBox(
-      'Server Error',
-      'Gagal memulai server Next.js. Pastikan port 3000 tidak digunakan aplikasi lain.'
-    )
-  }
-}
-
-// ─── Start Socket.io relay server ───────────────────────────────────────────
+// ─── Start Socket.io server (in-process, no child process) ─────────────────
 async function startSocketServer() {
-  const socketServerPath = isDev
-    ? path.join(__dirname, '..', 'mini-services', 'saatiril-socket', 'index.ts')
-    : path.join(process.resourcesPath, 'socket-server', 'index.js')
+  socketPort = await findAvailablePort(3003)
+  console.log(`[SAATIRIL] Using Socket.io port: ${socketPort}`)
 
-  console.log('[SAATIRIL Electron] Starting Socket.io server from:', socketServerPath)
-
-  const cmd = isDev ? 'bun' : process.execPath
-  const args = isDev ? ['--hot', socketServerPath] : [socketServerPath]
-
-  socketServerProcess = spawn(cmd, args, {
-    cwd: path.dirname(socketServerPath),
-    env: {
-      ...process.env,
-      PORT: String(SOCKET_PORT),
-      NODE_ENV: isDev ? 'development' : 'production',
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
+  httpServer = createServer()
+  io = new Server(httpServer, {
+    path: '/',
+    cors: { origin: '*', methods: ['GET', 'POST'] },
+    pingTimeout: 60000,
+    pingInterval: 25000,
   })
 
-  socketServerProcess.stdout.on('data', (data) => {
-    console.log('[Socket.io]', data.toString().trim())
+  io.on('connection', (socket) => {
+    console.log(`[SAATIRIL] Client connected: ${socket.id}`)
+    socket.on('lan-message', (payload) => {
+      socket.broadcast.emit('lan-message', payload)
+    })
+    socket.on('disconnect', () => {
+      console.log(`[SAATIRIL] Client disconnected: ${socket.id}`)
+    })
   })
 
-  socketServerProcess.stderr.on('data', (data) => {
-    console.error('[Socket.io]', data.toString().trim())
+  return new Promise((resolve, reject) => {
+    httpServer.listen(socketPort, '0.0.0.0', () => {
+      console.log(`[SAATIRIL] Socket.io server running on port ${socketPort}`)
+      resolve()
+    })
+    httpServer.on('error', reject)
   })
-
-  socketServerProcess.on('error', (err) => {
-    console.error('[SAATIRIL Electron] Socket.io server error:', err)
-  })
-
-  socketServerProcess.on('exit', (code) => {
-    console.log('[SAATIRIL Electron] Socket.io server exited with code:', code)
-  })
-
-  // Wait for the socket server to be ready
-  try {
-    await waitForPort(SOCKET_PORT, 'localhost', 15000)
-    console.log('[SAATIRIL Electron] Socket.io server is ready on port', SOCKET_PORT)
-  } catch (err) {
-    console.warn('[SAATIRIL Electron] Socket.io server may not be ready yet:', err.message)
-  }
 }
 
 // ─── Create main window ─────────────────────────────────────────────────────
@@ -180,22 +118,19 @@ function createMainWindow() {
     minHeight: 600,
     title: 'SAATIRIL — Sistem Auto Track Input Raw into Live',
     backgroundColor: '#1a0b2e',
-    icon: path.join(__dirname, '..', 'public', 'logo.svg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
     },
   })
 
-  // Load the Next.js app
-  const url = isDev
-    ? `http://localhost:${NEXT_PORT}`
-    : `http://localhost:${NEXT_PORT}`
+  // Load the static Next.js app via custom protocol
+  // Pass socketPort so the renderer knows where to connect
+  const startUrl = `saatiril://localhost/index.html?socketPort=${socketPort}`
+  mainWindow.loadURL(startUrl)
 
-  mainWindow.loadURL(url)
-
-  // Dev tools in development mode
   if (isDev) {
     mainWindow.webContents.openDevTools()
   }
@@ -214,7 +149,7 @@ function createMainWindow() {
               type: 'info',
               title: 'Tentang SAATIRIL',
               message: 'SAATIRIL — Sistem Auto Track Input Raw into Live',
-              detail: `Versi: ${app.getVersion()}\n\nAkses perangkat lain di LAN:\n${ipList || 'Tidak ada jaringan LAN terdeteksi'}\n\nNext.js: http://localhost:${NEXT_PORT}\nSocket.io: http://localhost:${SOCKET_PORT}`,
+              detail: `Versi: ${app.getVersion()}\n\nSocket.io: Port ${socketPort}\n\nAkses perangkat lain di LAN:\n${ipList || 'Tidak ada jaringan LAN terdeteksi'}`,
             })
           },
         },
@@ -254,23 +189,25 @@ function createMainWindow() {
           label: 'Lihat IP Address LAN',
           click: () => {
             const ips = getLocalIPs()
-            const ipList = ips.map(ip => `${ip.name}: ${ip.address}`).join('\n')
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: 'IP Address LAN',
               message: 'Perangkat lain dapat mengakses SAATIRIL di:',
-              detail: ipList
-                ? ips.map(ip =>
-                    `  ${ip.name}: http://${ip.address}:${NEXT_PORT}`
-                  ).join('\n')
+              detail: ips.length > 0
+                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:3000`).join('\n')
                 : 'Tidak ada jaringan LAN terdeteksi',
             })
           },
         },
         {
-          label: 'Buka di Browser',
+          label: 'Info Socket Server',
           click: () => {
-            shell.openExternal(`http://localhost:${NEXT_PORT}`)
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'Socket.io Server',
+              message: `Socket.io berjalan di port ${socketPort}`,
+              detail: `Port dipilih otomatis agar tidak bentrok dengan aplikasi lain.`,
+            })
           },
         },
       ],
@@ -285,36 +222,38 @@ function createMainWindow() {
   })
 }
 
-// ─── App lifecycle ──────────────────────────────────────────────────────────
-
+// ─── Handle custom protocol ─────────────────────────────────────────────────
 app.on('ready', async () => {
-  console.log('[SAATIRIL Electron] App ready, starting servers...')
+  // Register protocol handler for serving static files
+  protocol.handle('saatiril', (request) => {
+    const url = new URL(request.url)
+    let filePath = url.pathname
 
+    // Normalize: remove leading slash, handle directory -> index.html
+    if (filePath.startsWith('/')) filePath = filePath.slice(1)
+    if (filePath === '' || filePath.endsWith('/')) {
+      filePath += 'index.html'
+    }
+
+    const fullPath = path.join(STATIC_DIR, filePath)
+    return net.fetch(`file://${fullPath}`)
+  })
+
+  console.log('[SAATIRIL] Starting Socket.io server...')
   try {
-    // Start servers in parallel
-    await Promise.all([
-      startNextServer(),
-      startSocketServer(),
-    ])
-
-    createMainWindow()
-
-    // Show LAN info after window loads
-    mainWindow.webContents.on('did-finish-load', () => {
-      const ips = getLocalIPs()
-      if (ips.length > 0) {
-        const primaryIP = ips[0].address
-        console.log(`[SAATIRIL Electron] Perangkat lain bisa akses di: http://${primaryIP}:${NEXT_PORT}`)
-      }
-    })
+    await startSocketServer()
   } catch (err) {
-    console.error('[SAATIRIL Electron] Failed to start:', err)
-    dialog.showErrorBox(
-      'Startup Error',
-      `Gagal memulai SAATIRIL:\n${err.message}`
-    )
-    app.quit()
+    console.error('[SAATIRIL] Failed to start Socket.io server:', err)
   }
+
+  createMainWindow()
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    const ips = getLocalIPs()
+    if (ips.length > 0) {
+      console.log(`[SAATIRIL] Perangkat lain bisa akses Socket.io di: ${ips[0].address}:${socketPort}`)
+    }
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -322,17 +261,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  console.log('[SAATIRIL Electron] Shutting down servers...')
-
-  if (nextServerProcess) {
-    nextServerProcess.kill('SIGTERM')
-    nextServerProcess = null
-  }
-
-  if (socketServerProcess) {
-    socketServerProcess.kill('SIGTERM')
-    socketServerProcess = null
-  }
+  console.log('[SAATIRIL] Shutting down...')
+  if (io) io.close()
+  if (httpServer) httpServer.close()
 })
 
 app.on('activate', () => {
