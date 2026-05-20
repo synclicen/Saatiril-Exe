@@ -54,12 +54,54 @@ jobs:
         with:
           node-version: 20
 
-      # ── Linux dependencies (Ubuntu 22.04) ────────────────────────────────
+      # ── Linux dependencies ────────────────────────────────────────────────
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libxtst6 xauth xvfb libasound2-dev libgbm-dev
+
+      # ── Generate app icons ────────────────────────────────────────────────
+      - name: Generate Electron icons
+        shell: bash
+        run: |
+          mkdir -p electron/build
+          # Use Node.js to generate a simple PNG icon from SVG
+          node -e "
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+
+          // Create a simple 512x512 PNG icon using sharp
+          const svgBuffer = Buffer.from(\`<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'>
+            <rect width='512' height='512' rx='80' fill='#1a0b2e'/>
+            <rect x='40' y='40' width='432' height='432' rx='60' fill='#2a164a' stroke='#d4af37' stroke-width='4'/>
+            <circle cx='256' cy='220' r='100' fill='none' stroke='#d4af37' stroke-width='12'/>
+            <circle cx='256' cy='220' r='40' fill='#d4af37'/>
+            <rect x='156' y='340' width='200' height='8' rx='4' fill='#d4af37'/>
+            <text x='256' y='430' font-family='sans-serif' font-size='48' font-weight='bold' fill='#d4af37' text-anchor='middle'>SAATIRIL</text>
+          </svg>\`);
+
+          try {
+            const sharp = require('sharp');
+            // Generate multiple sizes
+            sharp(svgBuffer).resize(256, 256).png().toFile('electron/build/icon.png').then(() => {
+              console.log('Icon generated with sharp');
+            });
+          } catch(e) {
+            // Fallback: write SVG as icon (electron-builder supports SVG)
+            fs.writeFileSync('electron/build/icon.svg', svgBuffer);
+            console.log('Using SVG fallback for icon');
+          }
+          "
+
+          # Try to convert SVG to PNG with sharp if available
+          npx -y sharp-cli -i electron/build/icon.svg -o electron/build/icon.png resize 512 512 2>/dev/null || true
+
+          # If no PNG was created, use the SVG
+          if [ ! -f electron/build/icon.png ]; then
+            echo "No PNG icon, will use SVG fallback"
+            ls -la electron/build/
+          fi
 
       # ── Install dependencies ──────────────────────────────────────────────
       - name: Install main project dependencies
@@ -70,23 +112,16 @@ jobs:
 
       # ── Build Next.js ────────────────────────────────────────────────────
       - name: Build Next.js (standalone)
-        run: bun run build
+        run: bun run build:ci
         env:
           NEXT_TELEMETRY_DISABLED: 1
 
-      # ── Copy static files for standalone ──────────────────────────────────
+      # ── Copy static files for standalone (cross-platform) ────────────────
       - name: Copy static files for standalone
         shell: bash
         run: |
-          cp -r .next/static .next/standalone/.next/
-          cp -r public .next/standalone/
-
-      # ── Prepare Socket.io server for production ──────────────────────────
-      - name: Prepare Socket.io server
-        shell: bash
-        run: |
-          cd mini-services/saatiril-socket
-          # index.js already exists as CommonJS version
+          cp -r .next/static .next/standalone/.next/ 2>/dev/null || xcopy /E /I /Y .next\\static .next\\standalone\\.next\\static
+          cp -r public .next/standalone/ 2>/dev/null || xcopy /E /I /Y public .next\\standalone\\public
 
       # ── Install Electron builder ─────────────────────────────────────────
       - name: Install Electron
