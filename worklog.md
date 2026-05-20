@@ -111,3 +111,37 @@ Stage Summary:
 - Artifacts available for download from GitHub Actions
 - Release job will auto-trigger on version tags (v*)
 - Token cleaned from git remote URL after each push
+
+---
+Task ID: 4
+Agent: Main
+Task: Rebuild SAATIRIL as Windows-only desktop app with no port conflicts
+
+Work Log:
+- Root cause analysis: Previous Electron app ran Next.js server on port 3000, causing port conflict and infinite retries
+- Complete architecture change: NO Next.js server at all!
+- Changed next.config.ts: output 'standalone' → 'export' (generates static HTML/JS/CSS)
+- Removed /api/route.ts (incompatible with static export, was just a placeholder)
+- Rewrote electron/main.js with new architecture:
+  - Custom protocol saatiril:// to serve static files (no HTTP server!)
+  - Socket.io runs IN-PROCESS (no child process)
+  - Auto port detection: tries port 3003, 3004, 3005... until finds available
+  - Passes socketPort to renderer via URL query parameter
+  - No port 3000 used anywhere!
+- Updated src/lib/socket.ts:
+  - Detects Electron environment via window.saatirilAPI
+  - Electron mode: reads socketPort from URL params, connects directly
+  - Web mode: uses XTransformPort for Caddy gateway (unchanged)
+- Simplified electron-builder.yml: Windows only (NSIS installer), includes out/ directory
+- Simplified GitHub Actions: Windows only, no Linux/macOS dependencies
+- Simplified package.json scripts: removed mac/linux/unneeded scripts
+- Added socket.io as main dependency (needed for in-process server)
+- Created new GitHub repo: synclicen/Saatiril-Exe
+- Pushed all code, Actions build completed successfully
+- Windows installer artifact: SAATIRIL-Setup (240.3 MB) ✅
+
+Stage Summary:
+- Architecture: Static export + custom protocol + in-process Socket.io = ZERO port conflicts
+- Repo: https://github.com/synclicen/Saatiril-Exe
+- Windows build: ✅ SUCCESS
+- No more port 3000 issues, no child process crashes, no infinite retries
