@@ -22,6 +22,7 @@ jobs:
   # ─── Build job ──────────────────────────────────────────────────────────────
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -30,7 +31,7 @@ jobs:
           - os: macos-latest
             platform: mac
             artifact: SAATIRIL-macOS
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux
             artifact: SAATIRIL-Linux
 
@@ -53,12 +54,12 @@ jobs:
         with:
           node-version: 20
 
-      # ── Linux dependencies ────────────────────────────────────────────────
+      # ── Linux dependencies (Ubuntu 22.04) ────────────────────────────────
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2t64 libxtst6 xauth xvfb
+          sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libxtst6 xauth xvfb libasound2-dev libgbm-dev
 
       # ── Install dependencies ──────────────────────────────────────────────
       - name: Install main project dependencies
@@ -80,17 +81,14 @@ jobs:
           cp -r .next/static .next/standalone/.next/
           cp -r public .next/standalone/
 
-      # ── Compile Socket.io server for production ──────────────────────────
-      - name: Compile Socket.io server
+      # ── Prepare Socket.io server for production ──────────────────────────
+      - name: Prepare Socket.io server
         shell: bash
         run: |
           cd mini-services/saatiril-socket
-          # Create a simple JS version for production
-          cat index.ts | sed 's/import/createRequire/g' > index.js || true
-          # Just copy the TS file and rename, bun can run it
-          cp index.ts index.js 2>/dev/null || true
+          # index.js already exists as CommonJS version
 
-      # ── Install Electron ─────────────────────────────────────────────────
+      # ── Install Electron builder ─────────────────────────────────────────
       - name: Install Electron
         run: bun add -d electron electron-builder
 
