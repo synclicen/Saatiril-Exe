@@ -50,5 +50,10 @@ test
 prompt
 
 server.log
+
+# Electron build output
+/dist-electron/
+/electron/build/
+
 # Skills directory
 /skills/

@@ -1,0 +1,98 @@
+# SAATIRIL — electron-builder configuration
+# https://www.electron.build/configuration/configuration
+
+appId: com.saatiril.app
+productName: SAATIRIL
+copyright: Copyright © 2025 SAATIRIL
+
+# ─── Directories ─────────────────────────────────────────────────────────────
+directories:
+  buildResources: electron/build
+  output: dist-electron
+
+# ─── Files to include in the packaged app ────────────────────────────────────
+# We need the Next.js standalone build and the Socket.io server
+files:
+  - electron/**/*
+  - "!electron/build/**"
+
+# Extra resources: Next.js standalone build + Socket.io server + public assets
+extraResources:
+  - from: .next/standalone
+    to: standalone
+    filter:
+      - "**/*"
+  - from: .next/static
+    to: standalone/.next/static
+    filter:
+      - "**/*"
+  - from: public
+    to: standalone/public
+    filter:
+      - "**/*"
+  - from: mini-services/saatiril-socket
+    to: socket-server
+    filter:
+      - "index.js"
+      - "package.json"
+      - "node_modules/**/*"
+
+# ─── Platform-specific builds ────────────────────────────────────────────────
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: electron/build/icon.ico
+  uninstallerIcon: electron/build/icon.ico
+  installerHeaderIcon: electron/build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SAATIRIL
+
+# macOS
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: electron/build/icon.icns
+  category: public.app-category.photography
+  hardenedRuntime: true
+
+dmg:
+  title: "${productName} ${version}"
+  icon: electron/build/icon.icns
+  window:
+    width: 540
+    height: 380
+
+# Linux
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: electron/build
+  category: Photography
+  maintainer: SAATIRIL Team
+
+# ─── Auto-update (optional, requires GitHub Releases) ────────────────────────
+# publish:
+#   provider: github
+#   owner: your-github-username
+#   repo: saatiril
+
+# ─── Build metadata ──────────────────────────────────────────────────────────
+buildVersion: "1.0.0"

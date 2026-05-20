@@ -83,6 +83,23 @@ function statusLabel(status: StudentStatus): string {
   return ch != null ? `Foto Ch.${ch}` : 'Aktif'
 }
 
+/**
+ * Calculate the largest rectangle that fits within available space
+ * while maintaining the target aspect ratio.
+ */
+function fitAspectRatio(
+  availW: number,
+  availH: number,
+  ratio: number,
+): { width: number; height: number } {
+  const hFromW = availW / ratio
+  if (hFromW <= availH) {
+    return { width: availW, height: hFromW }
+  }
+  const wFromH = availH * ratio
+  return { width: wFromH, height: availH }
+}
+
 // ─── Capture state machine ──────────────────────────────────────────────────
 type CapturePhase = 'standby' | 'ready-1' | 'ready-2' | 'sending'
 
@@ -134,6 +151,7 @@ export function OperatorPanel() {
   const [cameraAvailable, setCameraAvailable] = useState(false)
   const [flashVisible, setFlashVisible] = useState(false)
   const [sending, setSending] = useState(false)
+  const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -144,12 +162,36 @@ export function OperatorPanel() {
   const streamRef = useRef<MediaStream | null>(null)
   const selectedDeviceRef = useRef<string>('')
   const frameImgRef = useRef<HTMLImageElement | null>(null)
+  const cameraZoneRef = useRef<HTMLDivElement>(null)
 
   // ── Derived config ───────────────────────────────────────────────────────
   const config = currentProject?.config
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
   const frameData = config?.frame ?? null
+
+  // ── Resize Observer: calculate camera dimensions ─────────────────────────
+  // Watches the camera zone wrapper and calculates the optimal camera size
+  // that fits within the available space while maintaining the aspect ratio.
+  useEffect(() => {
+    const zone = cameraZoneRef.current
+    if (!zone) return
+
+    const updateSize = () => {
+      const rect = zone.getBoundingClientRect()
+      const padding = 16 // 8px on each side
+      const availW = rect.width - padding
+      const availH = rect.height - padding
+      if (availW > 0 && availH > 0) {
+        setCameraDims(fitAspectRatio(availW, availH, aspectRatio))
+      }
+    }
+
+    updateSize()
+    const observer = new ResizeObserver(updateSize)
+    observer.observe(zone)
+    return () => observer.disconnect()
+  }, [aspectRatio])
 
   // ── Preload frame image ──────────────────────────────────────────────────
   useEffect(() => {
@@ -461,17 +503,18 @@ export function OperatorPanel() {
     <div className="flex h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          CAMERA ZONE — Aspect ratio is king, camera dictates its own size
-          Height fills available space, width is derived from aspect ratio
+          CAMERA ZONE — Camera dictates aspect ratio, sizes to fit available
+          space. ResizeObserver calculates optimal dimensions.
       ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="flex items-center justify-center h-full p-3 flex-shrink-0"
-        style={{ minWidth: 0 }}
+      <div
+        ref={cameraZoneRef}
+        className="flex-1 flex items-center justify-center h-full min-w-0 p-2"
       >
         <div
-          className="relative rounded-xl overflow-hidden border-2 h-full"
+          className="relative rounded-xl overflow-hidden border-2"
           style={{
-            aspectRatio: `${aspectRatio}`,
-            maxHeight: '100%',
+            width: cameraDims.width > 0 ? cameraDims.width : undefined,
+            height: cameraDims.height > 0 ? cameraDims.height : undefined,
             borderColor: hasActiveTarget ? THEME.gold : THEME.border,
             boxShadow: hasActiveTarget ? `0 0 16px ${THEME.gold}15` : 'none',
             backgroundColor: '#000000',
@@ -556,10 +599,10 @@ export function OperatorPanel() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          SIDEBAR — Target info, Queue list, Capture button
-          Takes remaining horizontal space, adapts to camera size
+          SIDEBAR — Fixed width, adapts vertically to fit alongside camera.
+          Target info, Queue list, Capture button.
       ═══════════════════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col gap-2 p-3 min-w-[260px] max-w-[380px] flex-1 min-h-0">
+      <div className="flex flex-col gap-2 p-2 w-[300px] shrink-0 min-h-0">
 
         {/* ── Target Info Panel (compact) ────────────────────────────────── */}
         <Card

@@ -8,6 +8,9 @@ import {
   Megaphone,
   Radio,
   Loader2,
+  Wifi,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -77,6 +80,8 @@ export function MainApp() {
   // ── Local state ────────────────────────────────────────────────────────────
   const [syncedFromServer, setSyncedFromServer] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
+  const [lanIP, setLanIP] = useState<string>('')
+  const [copiedIP, setCopiedIP] = useState(false)
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualMode = currentProject?.config.mode === 'dual'
@@ -86,6 +91,45 @@ export function MainApp() {
     if (myRole === 'mc') return 'mc'
     return 'operator'
   }, [myRole, currentTab])
+
+  // ── Detect LAN IP via WebRTC ───────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] })
+      pc.createDataChannel('')
+      pc.createOffer().then((offer) => pc.setLocalDescription(offer))
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) return
+        const parts = e.candidate.candidate.split(' ')
+        const ip = parts[4]
+        if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+          setLanIP(ip)
+          pc.close()
+        }
+      }
+      // Fallback: also try to detect from hostname
+      setTimeout(() => {
+        pc.close()
+        if (!lanIP && typeof window !== 'undefined') {
+          // Try using the hostname from current URL
+          const hostname = window.location.hostname
+          if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            setLanIP(hostname)
+          }
+        }
+      }, 3000)
+    } catch {
+      // WebRTC not available, skip
+    }
+  }, [])
+
+  // ── Copy IP to clipboard ────────────────────────────────────────────────────
+  const handleCopyIP = useCallback(() => {
+    if (!lanIP) return
+    navigator.clipboard.writeText(`http://${lanIP}:3000`)
+    setCopiedIP(true)
+    setTimeout(() => setCopiedIP(false), 2000)
+  }, [lanIP])
 
   // ── URL parameter handling (run once on mount) ────────────────────────────
   useEffect(() => {
@@ -294,6 +338,25 @@ export function MainApp() {
               </Badge>
             )}
 
+            {/* LAN IP indicator — shows IP for other devices to connect */}
+            {lanIP && (
+              <button
+                onClick={handleCopyIP}
+                className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
+                title="Klik untuk salin alamat LAN"
+              >
+                <Wifi className="size-3" style={{ color: THEME.gold }} />
+                <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
+                  {lanIP}:3000
+                </span>
+                {copiedIP ? (
+                  <Check className="size-3" style={{ color: '#22c55e' }} />
+                ) : (
+                  <Copy className="size-3" style={{ color: THEME.muted }} />
+                )}
+              </button>
+            )}
+
             {/* Server status */}
             <div className="flex shrink-0 items-center gap-1.5">
               <span
@@ -306,7 +369,7 @@ export function MainApp() {
                 }}
               />
               <span className="hidden text-[10px] font-medium sm:inline" style={{ color: THEME.muted }}>
-                LAN Server
+                LAN
               </span>
             </div>
           </div>
