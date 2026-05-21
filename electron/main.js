@@ -10,9 +10,10 @@
  * This eliminates ALL port conflict issues.
  */
 
-const { app, BrowserWindow, Menu, dialog, shell, protocol, net } = require('electron')
+const { app, BrowserWindow, Menu, dialog, shell, protocol, net, ipcMain } = require('electron')
 const path = require('path')
 const os = require('os')
+const fs = require('fs')
 const { createServer } = require('http')
 const { Server } = require('socket.io')
 
@@ -248,6 +249,31 @@ function createMainWindow() {
     mainWindow = null
   })
 }
+
+// ─── IPC Handlers (must be registered before app.ready) ────────────────────
+ipcMain.handle('get-version', () => {
+  return app.getVersion()
+})
+
+ipcMain.handle('select-folder', async (event, defaultPath) => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Pilih Folder Tujuan Output',
+    defaultPath: defaultPath || 'C:\\SAATIRIL_System_Out',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const selectedPath = result.filePaths[0]
+  // Ensure folder exists
+  try {
+    if (!fs.existsSync(selectedPath)) {
+      fs.mkdirSync(selectedPath, { recursive: true })
+    }
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to create folder:', e.message)
+  }
+  return selectedPath
+})
 
 // ─── Handle custom protocol ─────────────────────────────────────────────────
 app.on('ready', async () => {

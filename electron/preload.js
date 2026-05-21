@@ -16,4 +16,7 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
 
   /** Get application version */
   getVersion: () => ipcRenderer.invoke('get-version'),
+
+  /** Open native folder picker dialog — returns selected path or null */
+  selectFolder: (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
 })

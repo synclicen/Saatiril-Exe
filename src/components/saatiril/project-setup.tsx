@@ -57,7 +57,7 @@ export default function ProjectSetup() {
   const [cameraMode, setCameraMode] = useState<'single' | 'dual'>('single')
   const [ratio, setRatio] = useState('4:3')
   const [preset, setPreset] = useState('original')
-  const [targetFolder] = useState('C:\\SAATIRIL_System_Out')
+  const [targetFolder, setTargetFolder] = useState('C:\\SAATIRIL_System_Out')
   const [frameData, setFrameData] = useState<string | null>(null)
   const [frameFileName, setFrameFileName] = useState<string>('')
 
@@ -411,7 +411,7 @@ export default function ProjectSetup() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="relative h-full bg-[#1a0b2e] backdrop-blur-sm overflow-hidden">
+    <div className="relative h-screen bg-[#1a0b2e] backdrop-blur-sm overflow-hidden">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#1a0b2e] via-[#2a164a]/30 to-[#1a0b2e]" />
 
@@ -611,6 +611,9 @@ export default function ProjectSetup() {
                         <SelectItem value="cinematic" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           Cinematic Gold
                         </SelectItem>
+                        <SelectItem value="pro" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Preset Pro — High Contrast + Sharpening
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -700,12 +703,25 @@ export default function ProjectSetup() {
                     <Button
                       variant="outline"
                       className="shrink-0 border-[#533485] bg-[#3b2263] text-[#c4b5fd] hover:bg-[#533485]/30 hover:text-[#d4af37]"
-                      onClick={() => {
-                        toast({
-                          title: 'Tidak Tersedia',
-                          description:
-                            'Folder browsing hanya berfungsi pada versi .exe desktop.',
-                        })
+                      onClick={async () => {
+                        // Use Electron folder picker if available
+                        const api = window.saatirilAPI
+                        if (api?.selectFolder) {
+                          const selected = await api.selectFolder(targetFolder)
+                          if (selected) {
+                            setTargetFolder(selected)
+                            toast({
+                              title: 'Folder Dipilih',
+                              description: selected,
+                            })
+                          }
+                        } else {
+                          toast({
+                            title: 'Tidak Tersedia',
+                            description:
+                              'Folder browsing hanya berfungsi pada versi .exe desktop.',
+                          })
+                        }
                       }}
                     >
                       Browse

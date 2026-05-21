@@ -331,7 +331,7 @@ export function MainApp() {
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full flex-col" style={{ backgroundColor: THEME.bg }}>
+    <div className="flex h-screen flex-col" style={{ backgroundColor: THEME.bg }}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header
         className="shrink-0 border-b backdrop-blur-sm z-20"

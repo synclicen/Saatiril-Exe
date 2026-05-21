@@ -70,7 +70,7 @@ export function ProjectHub() {
   }, [])
 
   return (
-    <div className="h-full flex flex-col bg-[#1a0b2e] bg-[radial-gradient(#3b2263_1px,transparent_1px)] bg-[length:20px_20px]">
+    <div className="h-screen flex flex-col bg-[#1a0b2e] bg-[radial-gradient(#3b2263_1px,transparent_1px)] bg-[length:20px_20px]">
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-[#533485] bg-[#2a164a]/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
