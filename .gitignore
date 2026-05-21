@@ -1,6 +1,4 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
+# Dependencies
 node_modules
 /.pnp
 .pnp.*
@@ -10,54 +8,56 @@ node_modules
 !.yarn/releases
 !.yarn/versions
 
-# testing
+# Testing
 /coverage
 
-# next.js
+# Next.js
 /.next/
 /out/
 
-# production
+# Production build
 /build
 
-# misc
+# Misc
 .DS_Store
 *.pem
 
-# debug
+# Debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
 *.log
 dev.log
 dev.out.log
-test
-prompt
-
 server.log
+
+# Environment files
+.env*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Database (auto-generated)
+db/*.db
 
 # Electron build output
 /dist-electron/
 /electron/build/
 
-# Skills directory
-/skills/# Database (auto-generated)
-db/*.db
-
-# Dev scripts
+# ============================================
+# SAATIRIL — Development-only folders (NOT for GitHub)
+# ============================================
+skills/
+examples/
+agent-ctx/
 .zscripts/
+.github/
+download/
+.claude
+.z-ai-config
+local-*
+test
+prompt
+worklog.md
