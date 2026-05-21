@@ -38,6 +38,16 @@ export type Role = 'admin' | 'mc' | 'operator'
 export type AppScreen = 'hub' | 'setup' | 'app'
 export type AppTab = 'admin' | 'mc' | 'operator'
 
+// ─── Memory guard: max photo history items kept in memory ──────────────────
+// With thousands of participants, we can't keep all base64 photos in memory.
+// Admin keeps last N items for live gallery; MC/Operator only need current target.
+// Photos are still saved to disk by the Operator's SYNC_DB handler.
+const MAX_PHOTO_HISTORY_IN_MEMORY = 200
+
+// ─── Debounced save ───────────────────────────────────────────────────────
+let saveTimeout: ReturnType<typeof setTimeout> | null = null
+const SAVE_DEBOUNCE_MS = 500 // Debounce saves to avoid thrashing localStorage
+
 interface SaatirilState {
   // Projects
   projects: Project[]
@@ -74,6 +84,17 @@ interface SaatirilState {
   updateStudentStatus: (studentId: string, status: StudentStatus) => void
 }
 
+/**
+ * Trim photoHistory to prevent memory bloat with thousands of participants.
+ * Only keeps the most recent N items (by array order = chronological).
+ * Photo data is still saved to disk via the Operator's file save logic.
+ */
+function trimPhotoHistory(history: PhotoHistoryItem[]): PhotoHistoryItem[] {
+  if (history.length <= MAX_PHOTO_HISTORY_IN_MEMORY) return history
+  // Keep the most recent items (last N)
+  return history.slice(history.length - MAX_PHOTO_HISTORY_IN_MEMORY)
+}
+
 export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   projects: [],
   currentProject: null,
@@ -92,10 +113,15 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   }),
   setCurrentProject: (project) => set({ currentProject: project }),
   updateCurrentProject: (project) => set((s) => {
-    const idx = s.projects.findIndex(p => p.id === project.id)
+    // Auto-trim photo history to prevent memory bloat
+    const trimmedProject = {
+      ...project,
+      photoHistory: trimPhotoHistory(project.photoHistory),
+    }
+    const idx = s.projects.findIndex(p => p.id === trimmedProject.id)
     const newProjects = [...s.projects]
-    if (idx !== -1) newProjects[idx] = project
-    return { currentProject: project, projects: newProjects }
+    if (idx !== -1) newProjects[idx] = trimmedProject
+    return { currentProject: trimmedProject, projects: newProjects }
   }),
   setMyRole: (role) => set({ myRole: role }),
   setMyChannel: (channel) => set({ myChannel: channel }),
@@ -119,13 +145,19 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   },
 
   saveProjectsToStorage: () => {
-    try {
-      const { projects } = get()
-      const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
-      localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
-    } catch (e) {
-      console.error('Failed to save projects to storage', e)
-    }
+    // Debounced — prevents localStorage thrashing during rapid state changes
+    if (saveTimeout) clearTimeout(saveTimeout)
+    saveTimeout = setTimeout(() => {
+      try {
+        const { projects } = get()
+        // Never save photoHistory to localStorage (too large, and it's transient data)
+        // Photo data is saved to disk by Operator's file save logic
+        const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
+        localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+      } catch (e) {
+        console.error('Failed to save projects to storage', e)
+      }
+    }, SAVE_DEBOUNCE_MS)
   },
 
   updateStudentStatus: (studentId, status) => set((s) => {

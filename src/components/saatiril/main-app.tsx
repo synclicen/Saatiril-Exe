@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal, getSocket } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -80,6 +80,7 @@ export function MainApp() {
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [serverConnected, setServerConnected] = useState(false)
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'degraded' | 'disconnected'>('disconnected')
   const [lanIP, setLanIP] = useState<string>('')
   const [copiedIP, setCopiedIP] = useState(false)
 
@@ -161,15 +162,19 @@ export function MainApp() {
 
     const handleConnect = () => {
       setServerConnected(true)
+      setConnectionQuality('good')
 
-      // On reconnection, re-request state sync from admin to ensure we have latest data
+      // On (re)connection, re-request state sync from admin to ensure we have latest data
       const role = myRoleRef.current
       if (role !== 'admin') {
         emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
       }
+
+      console.log('[SAATIRIL] Connected — requesting state sync')
     }
     const handleDisconnect = () => {
       setServerConnected(false)
+      setConnectionQuality('disconnected')
     }
 
     socket.on('connect', handleConnect)
@@ -178,6 +183,7 @@ export function MainApp() {
     queueMicrotask(() => {
       if (socket.connected) {
         setServerConnected(true)
+        setConnectionQuality('good')
       }
     })
 
@@ -185,6 +191,21 @@ export function MainApp() {
       socket.off('connect', handleConnect)
       socket.off('disconnect', handleDisconnect)
     }
+  }, [])
+
+  // ── Connection quality monitor ────────────────────────────────────────────
+  useEffect(() => {
+    const monitor = setInterval(() => {
+      const health = getConnectionHealth()
+      if (!health.connected) {
+        setConnectionQuality('disconnected')
+      } else if (health.reconnectCount > 2) {
+        setConnectionQuality('degraded')
+      } else {
+        setConnectionQuality('good')
+      }
+    }, 5000)
+    return () => clearInterval(monitor)
   }, [])
 
   // ── Socket event listeners (stable — no currentProject in deps) ──────────
@@ -387,19 +408,22 @@ export function MainApp() {
               </button>
             )}
 
-            {/* Server status */}
-            <div className="flex shrink-0 items-center gap-1.5">
+            {/* Server status with connection quality */}
+            <div className="flex shrink-0 items-center gap-1.5" title={connectionQuality === 'good' ? 'Koneksi LAN stabil' : connectionQuality === 'degraded' ? 'Koneksi tidak stabil' : 'Tidak terhubung'}>
               <span
                 className="size-2 rounded-full"
                 style={{
-                  backgroundColor: serverConnected ? '#22c55e' : '#ef4444',
-                  boxShadow: serverConnected
+                  backgroundColor: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : '#ef4444',
+                  boxShadow: connectionQuality === 'good'
                     ? '0 0 6px #22c55e88'
-                    : '0 0 6px #ef444488',
+                    : connectionQuality === 'degraded'
+                      ? '0 0 6px #f59e0b88'
+                      : '0 0 6px #ef444488',
+                  animation: connectionQuality === 'degraded' ? 'pulse 2s infinite' : 'none',
                 }}
               />
-              <span className="hidden text-[10px] font-medium sm:inline" style={{ color: THEME.muted }}>
-                LAN
+              <span className="hidden text-[10px] font-medium sm:inline" style={{ color: connectionQuality === 'good' ? '#22c55e' : connectionQuality === 'degraded' ? '#f59e0b' : THEME.muted }}>
+                {connectionQuality === 'good' ? 'LAN' : connectionQuality === 'degraded' ? 'LAN ⚠' : 'OFFLINE'}
               </span>
             </div>
           </div>

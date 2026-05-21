@@ -78,6 +78,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 // ─── Start Socket.io server (in-process, no child process) ─────────────────
+let totalMessagesRelayed = 0
+let totalConnections = 0
+
 async function startSocketServer() {
   socketPort = await findAvailablePort(3003)
   console.log(`[SAATIRIL] Using Socket.io port: ${socketPort}`)
@@ -86,23 +89,47 @@ async function startSocketServer() {
   io = new Server(httpServer, {
     path: '/',
     cors: { origin: '*', methods: ['GET', 'POST'] },
-    pingTimeout: 60000,
-    pingInterval: 25000,
+    // Production-grade settings for ceremony stability
+    pingTimeout: 30000,       // 30s — generous for LAN
+    pingInterval: 15000,      // 15s — faster disconnect detection
+    maxHttpBufferSize: 20e6,  // 20MB — supports dual-channel photo bursts
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+    },
+    transports: ['websocket', 'polling'],
+    allowUpgrades: true,
   })
 
   io.on('connection', (socket) => {
-    console.log(`[SAATIRIL] Client connected: ${socket.id}`)
+    totalConnections++
+    console.log(`[SAATIRIL] Client connected: ${socket.id} (total: ${io.sockets.sockets.size}, all-time: ${totalConnections})`)
+
     socket.on('lan-message', (payload) => {
+      totalMessagesRelayed++
       socket.broadcast.emit('lan-message', payload)
+      // Log critical events for debugging
+      if (payload.event === 'PHOTOS_SAVED' || payload.event === 'MC_CALL' || payload.event === 'SYNC_DB') {
+        console.log(`[SAATIRIL] Relay: ${payload.event} from ${socket.id}`)
+      }
     })
-    socket.on('disconnect', () => {
-      console.log(`[SAATIRIL] Client disconnected: ${socket.id}`)
+
+    socket.on('identify', (data) => {
+      console.log(`[SAATIRIL] Client identified: ${socket.id} → ${data.role} Ch.${data.channel}`)
+    })
+
+    socket.on('disconnect', (reason) => {
+      console.log(`[SAATIRIL] Client disconnected: ${socket.id} (reason: ${reason}, remaining: ${io.sockets.sockets.size - 1})`)
+    })
+
+    socket.on('error', (error) => {
+      console.error(`[SAATIRIL] Socket error (${socket.id}):`, error.message)
     })
   })
 
   return new Promise((resolve, reject) => {
     httpServer.listen(socketPort, '0.0.0.0', () => {
       console.log(`[SAATIRIL] Socket.io server running on port ${socketPort}`)
+      console.log(`[SAATIRIL] Production config: ping=15s/30s, maxPayload=20MB, connectionRecovery=2min`)
       resolve()
     })
     httpServer.on('error', reject)
@@ -262,8 +289,24 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   console.log('[SAATIRIL] Shutting down...')
+  console.log(`[SAATIRIL] Final stats: ${totalMessagesRelayed} messages relayed, ${totalConnections} total connections`)
+  // Notify clients before shutting down
+  if (io) {
+    io.emit('lan-message', { event: 'SERVER_SHUTDOWN', data: { reason: 'app-quit', timestamp: Date.now() } })
+  }
   if (io) io.close()
   if (httpServer) httpServer.close()
+})
+
+// ─── Prevent crashes during ceremony ──────────────────────────────────────
+process.on('uncaughtException', (error) => {
+  console.error('[SAATIRIL] UNCAUGHT EXCEPTION (app stays alive):', error.message)
+  // Don't exit — keep the app running for the ceremony!
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[SAATIRIL] UNHANDLED REJECTION (app stays alive):', reason)
+  // Don't exit — keep the app running for the ceremony!
 })
 
 app.on('activate', () => {
