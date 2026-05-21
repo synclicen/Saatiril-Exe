@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Camera,
@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSaatirilStore, type AppTab, type Role, type Project } from '@/store/use-saatiril-store'
-import { connectSocket, onLocal, offLocal, emitLocal } from '@/lib/socket'
+import { connectSocket, onLocal, offLocal, emitLocal, getSocket } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
 import { McPanel } from '@/components/saatiril/mc-panel'
@@ -76,16 +76,23 @@ export function MainApp() {
   const setMyChannel = useSaatirilStore((s) => s.setMyChannel)
   const setCurrentScreen = useSaatirilStore((s) => s.setCurrentScreen)
   const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
+  const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
   // ── Local state ────────────────────────────────────────────────────────────
-  const [syncedFromServer, setSyncedFromServer] = useState(false)
   const [serverConnected, setServerConnected] = useState(false)
   const [lanIP, setLanIP] = useState<string>('')
   const [copiedIP, setCopiedIP] = useState(false)
 
+  // ── Refs for stable event handlers ─────────────────────────────────────────
+  const myRoleRef = useRef(myRole)
+  const currentProjectRef = useRef(currentProject)
+  useEffect(() => { myRoleRef.current = myRole }, [myRole])
+  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualMode = currentProject?.config.mode === 'dual'
-  const isSynced = myRole === 'admin' || syncedFromServer
+  // Non-admin is synced when they have a project (from server or localStorage)
+  const isSynced = myRole === 'admin' || currentProject !== null
   const effectiveTab: AppTab = useMemo(() => {
     if (myRole === 'admin') return currentTab
     if (myRole === 'mc') return 'mc'
@@ -123,7 +130,7 @@ export function MainApp() {
     }
   }, [])
 
-  // ── Copy IP to clipboard ────────────────────────────────────────────────────
+  // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
     navigator.clipboard.writeText(`http://${lanIP}:3000`)
@@ -152,8 +159,18 @@ export function MainApp() {
   useEffect(() => {
     const socket = connectSocket()
 
-    const handleConnect = () => setServerConnected(true)
-    const handleDisconnect = () => setServerConnected(false)
+    const handleConnect = () => {
+      setServerConnected(true)
+
+      // On reconnection, re-request state sync from admin to ensure we have latest data
+      const role = myRoleRef.current
+      if (role !== 'admin') {
+        emitLocal('REQUEST_STATE', { role, channel: useSaatirilStore.getState().myChannel })
+      }
+    }
+    const handleDisconnect = () => {
+      setServerConnected(false)
+    }
 
     socket.on('connect', handleConnect)
     socket.on('disconnect', handleDisconnect)
@@ -170,50 +187,63 @@ export function MainApp() {
     }
   }, [])
 
-  // ── Socket event listeners ────────────────────────────────────────────────
+  // ── Socket event listeners (stable — no currentProject in deps) ──────────
   useEffect(() => {
     const handleSyncDb = (data: { project: Project }) => {
-      if (myRole !== 'admin' && data.project) {
+      const role = myRoleRef.current
+      const curProj = currentProjectRef.current
+
+      if (role !== 'admin' && data.project) {
+        // For MC/Operator: replace entire project with server data
         updateCurrentProject(data.project)
-        setSyncedFromServer(true)
+      } else if (role === 'admin' && data.project) {
+        // For admin: merge database and photoHistory from other clients
+        if (curProj && data.project.id === curProj.id) {
+          updateCurrentProject({
+            ...curProj,
+            database: data.project.database,
+            photoHistory: data.project.photoHistory ?? curProj.photoHistory,
+          })
+        }
       }
     }
 
     const handleRequestState = () => {
-      if (myRole === 'admin' && currentProject) {
-        emitLocal('SYNC_DB', { project: currentProject })
+      const role = myRoleRef.current
+      const curProj = currentProjectRef.current
+      if (role === 'admin' && curProj) {
+        emitLocal('SYNC_DB', { project: curProj })
       }
     }
 
-    const handleAdminSyncDb = (data: { project: Project }) => {
-      if (myRole === 'admin' && data.project) {
-        updateCurrentProject(data.project)
-      }
-    }
-
-    onLocal('SYNC_DB', myRole === 'admin' ? handleAdminSyncDb : handleSyncDb)
+    onLocal('SYNC_DB', handleSyncDb)
     onLocal('REQUEST_STATE', handleRequestState)
 
     return () => {
-      offLocal('SYNC_DB', myRole === 'admin' ? handleAdminSyncDb : handleSyncDb)
+      offLocal('SYNC_DB', handleSyncDb)
       offLocal('REQUEST_STATE', handleRequestState)
     }
-  }, [myRole, currentProject, updateCurrentProject])
+  }, [updateCurrentProject])
 
-  // ── Non-admin: request state sync on mount ────────────────────────────────
+  // ── Non-admin: load localStorage + request state from admin ────────────────
   useEffect(() => {
-    if (myRole !== 'admin') {
-      const requestInterval = setInterval(() => {
-        if (!isSynced) {
-          emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
-        }
-      }, 2000)
+    if (myRole === 'admin') return
 
-      emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+    // Try to recover project from localStorage first (for reconnection/recovery)
+    loadProjectsFromStorage()
 
-      return () => clearInterval(requestInterval)
-    }
-  }, [myRole, myChannel, isSynced])
+    // Request state from admin via socket
+    emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+
+    // Periodic retry while we don't have a project
+    const requestInterval = setInterval(() => {
+      if (!useSaatirilStore.getState().currentProject) {
+        emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
+      }
+    }, 3000)
+
+    return () => clearInterval(requestInterval)
+  }, [myRole, myChannel, loadProjectsFromStorage])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBack = useCallback(() => {

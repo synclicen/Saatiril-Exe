@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Users,
   CheckCircle2,
@@ -100,6 +100,10 @@ export default function AdminDashboard() {
     [database],
   )
 
+  // ── Refs for stable event handlers (avoid re-registering on every project change) ──
+  const currentProjectRef = useRef(currentProject)
+  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+
   // ── Socket listeners ─────────────────────────────────────────────
   useEffect(() => {
     const handleMcCall = (data: McCallData) => {
@@ -121,7 +125,8 @@ export default function AdminDashboard() {
     }
 
     const handlePhotosSaved = (data: PhotosSavedData) => {
-      if (!currentProject) return
+      const proj = currentProjectRef.current
+      if (!proj) return
 
       // Build the history item from the data
       const historyItem: PhotoHistoryItem = {
@@ -131,28 +136,60 @@ export default function AdminDashboard() {
       }
 
       // Check if this student already has a history entry
-      const existing = currentProject.photoHistory.findIndex(
+      const existing = proj.photoHistory.findIndex(
         (h) =>
           h.student.id === data.student.id &&
           h.channel === data.channel,
       )
       let newHistory: PhotoHistoryItem[]
       if (existing !== -1) {
-        newHistory = [...currentProject.photoHistory]
+        newHistory = [...proj.photoHistory]
         newHistory[existing] = historyItem
       } else {
-        newHistory = [...currentProject.photoHistory, historyItem]
+        newHistory = [...proj.photoHistory, historyItem]
       }
-      updateCurrentProject({ ...currentProject, photoHistory: newHistory })
+
+      // Also update the student status in database to 'done'
+      const updatedDatabase = proj.database.map((s) =>
+        s.id === data.student.id ? { ...s, status: 'done' as const } : s
+      )
+
+      updateCurrentProject({
+        ...proj,
+        database: updatedDatabase,
+        photoHistory: newHistory,
+      })
+
+      // Clear the live target for this channel — photo session is complete
+      setLiveTargets((prev) => ({
+        ...prev,
+        [data.channel]: null,
+      }))
+      setCameraStatus((prev) => ({
+        ...prev,
+        [data.channel]: 'Selesai — Menunggu target...',
+      }))
     }
 
     const handleSyncDb = (data: SyncDbData) => {
-      if (!currentProject) return
+      const proj = currentProjectRef.current
+      if (!proj) return
+      // Use the full project data from SYNC_DB (authoritative)
       updateCurrentProject({
-        ...currentProject,
+        ...proj,
         database: data.project.database,
-        photoHistory: data.project.photoHistory,
+        photoHistory: data.project.photoHistory ?? proj.photoHistory,
       })
+
+      // Check if any active student in the synced DB is now done — clear live targets
+      for (let ch = 1; ch <= 2; ch++) {
+        const hadActive = proj.database.some((s) => s.assignedChannel === ch && s.status.startsWith('active'))
+        const nowDone = data.project.database.some((s) => s.assignedChannel === ch && s.status === 'done')
+        if (hadActive && nowDone) {
+          setLiveTargets((prev) => ({ ...prev, [ch]: null }))
+          setCameraStatus((prev) => ({ ...prev, [ch]: 'Selesai — Menunggu target...' }))
+        }
+      }
     }
 
     onLocal('MC_CALL', handleMcCall)
@@ -166,7 +203,7 @@ export default function AdminDashboard() {
       offLocal('PHOTOS_SAVED', handlePhotosSaved)
       offLocal('SYNC_DB', handleSyncDb)
     }
-  }, [currentProject, updateCurrentProject])
+  }, [updateCurrentProject])
 
   // ── Copy link handler ────────────────────────────────────────────
   const copyLink = useCallback(

@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Megaphone, Users, Clock, CheckCircle2, Loader2 } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus } from '@/store/use-saatiril-store'
+import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera } from 'lucide-react'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
@@ -37,6 +37,34 @@ function statusLabel(status: StudentStatus): string {
   return ch != null ? `Foto Ch.${ch}` : 'Aktif'
 }
 
+// ─── Socket event data shapes ───────────────────────────────────────────────
+interface SyncDbData {
+  project: {
+    id: string
+    name: string
+    config: {
+      mode: 'single' | 'dual'
+      ratio: string
+      preset: string
+      targetFolder: string
+      frame: string | null
+    }
+    database: Student[]
+    photoHistory: PhotoHistoryItem[]
+  }
+}
+
+interface PhotosSavedData {
+  student: Student
+  photos: string[]
+  channel: number
+}
+
+interface OpProgressData {
+  channel: number
+  status: string
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 export function McPanel() {
   const currentProject = useSaatirilStore((s) => s.currentProject)
@@ -44,6 +72,15 @@ export function McPanel() {
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
   const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
+
+  // ── Local UI state for operator progress ─────────────────────────────────
+  const [opProgressText, setOpProgressText] = useState<string>('')
+
+  // ── Refs for stable event handlers ───────────────────────────────────────
+  const myChannelRef = useRef(myChannel)
+  const currentProjectRef = useRef(currentProject)
+  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
+  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
   // ── Derived data ────────────────────────────────────────────────────────
   const channelStudents = useMemo<Student[]>(() => {
@@ -77,17 +114,93 @@ export function McPanel() {
     }
   }, [currentlyActive, nextPending])
 
-  // ── Socket sync ─────────────────────────────────────────────────────────
-  const handleSync = useCallback(() => {
-    // Trigger re-render by reading from store (Zustand will handle reactivity)
+  // ── Socket: SYNC_DB — update store with latest project data ────────────
+  useEffect(() => {
+    const handleSyncDb = (data: SyncDbData) => {
+      if (!data.project) return
+      const proj = data.project
+      // Only update if this is the same project we're working on
+      const curProj = currentProjectRef.current
+      if (curProj && proj.id === curProj.id) {
+        updateCurrentProject({
+          ...curProj,
+          database: proj.database,
+          photoHistory: proj.photoHistory ?? curProj.photoHistory,
+        })
+      }
+    }
+
+    onLocal('SYNC_DB', handleSyncDb)
+    return () => { offLocal('SYNC_DB', handleSyncDb) }
+  }, [updateCurrentProject])
+
+  // ── Socket: PHOTOS_SAVED — operator finished capturing 2 photos ────────
+  useEffect(() => {
+    const handlePhotosSaved = (data: PhotosSavedData) => {
+      if (data.channel !== myChannelRef.current) return
+
+      // Immediately mark student as 'done' in our local store
+      updateStudentStatus(data.student.id, 'done')
+      saveProjectsToStorage()
+
+      // Clear operator progress text
+      setOpProgressText('')
+
+      // Also update the full project to sync photoHistory
+      const curProj = currentProjectRef.current
+      if (curProj) {
+        const historyItem: PhotoHistoryItem = {
+          student: data.student,
+          photos: data.photos,
+          channel: data.channel,
+        }
+        const existing = curProj.photoHistory.findIndex(
+          (h) => h.student.id === data.student.id && h.channel === data.channel,
+        )
+        let newHistory: PhotoHistoryItem[]
+        if (existing !== -1) {
+          newHistory = [...curProj.photoHistory]
+          newHistory[existing] = historyItem
+        } else {
+          newHistory = [...curProj.photoHistory, historyItem]
+        }
+        const updatedProject = {
+          ...curProj,
+          database: curProj.database.map((s) =>
+            s.id === data.student.id ? { ...s, status: 'done' as StudentStatus } : s
+          ),
+          photoHistory: newHistory,
+        }
+        updateCurrentProject(updatedProject)
+      }
+    }
+
+    onLocal('PHOTOS_SAVED', handlePhotosSaved)
+    return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
+  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorage])
+
+  // ── Socket: OP_PROGRESS — operator is taking photos ────────────────────
+  useEffect(() => {
+    const handleOpProgress = (data: OpProgressData) => {
+      if (data.channel !== myChannelRef.current) return
+      setOpProgressText(data.status)
+    }
+
+    onLocal('OP_PROGRESS', handleOpProgress)
+    return () => { offLocal('OP_PROGRESS', handleOpProgress) }
   }, [])
 
+  // ── Socket: MC_CALL — another MC called a student (multi-channel) ──────
   useEffect(() => {
-    onLocal('SYNC_DB', handleSync)
-    return () => {
-      offLocal('SYNC_DB', handleSync)
+    const handleMcCall = (data: { student: Student; channel: number }) => {
+      if (data.channel !== myChannelRef.current) return
+      // Another client called a student on our channel — update our store
+      updateStudentStatus(data.student.id, data.student.status)
     }
-  }, [handleSync])
+
+    onLocal('MC_CALL', handleMcCall)
+    return () => { offLocal('MC_CALL', handleMcCall) }
+  }, [updateStudentStatus])
 
   // ── Call action ─────────────────────────────────────────────────────────
   const handleCallNow = useCallback(() => {
@@ -109,6 +222,9 @@ export function McPanel() {
       ),
     }
     updateCurrentProject(updatedProject)
+
+    // Clear any stale progress text
+    setOpProgressText('')
 
     emitLocal('SYNC_DB', { project: updatedProject })
     emitLocal('MC_CALL', {
@@ -138,7 +254,7 @@ export function McPanel() {
           }}
         >
           <Loader2 className="size-5 animate-spin" />
-          TUNGGU KAMERA...
+          {opProgressText || 'TUNGGU KAMERA...'}
         </Button>
       )
     }
@@ -234,7 +350,7 @@ export function McPanel() {
             border: `1px solid ${THEME.gold}66`,
           }}
         >
-          <Loader2 className="size-3 mr-0.5 animate-spin" />
+          <Camera className="size-3 mr-0.5" />
           {statusLabel(status)}
         </Badge>
       )
@@ -308,6 +424,15 @@ export function McPanel() {
               <p className="text-sm font-mono" style={{ color: THEME.muted }}>
                 {currentlyActive.nim}
               </p>
+              {/* Show real-time operator progress */}
+              {opProgressText && (
+                <div className="flex items-center gap-2 mt-1">
+                  <Camera className="size-3.5" style={{ color: THEME.gold }} />
+                  <span className="text-xs font-medium" style={{ color: THEME.gold }}>
+                    {opProgressText}
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-1">

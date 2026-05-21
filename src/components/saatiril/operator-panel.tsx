@@ -317,8 +317,14 @@ export function OperatorPanel() {
     return () => { navigator.mediaDevices.removeEventListener('devicechange', handler) }
   }, [enumerateVideoDevices])
 
+  // ── Refs for stable handlers ─────────────────────────────────────────────
+  const myChannelRef = useRef(myChannel)
+  const currentProjectRef = useRef(currentProject)
+  useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
+  useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
+
   // ── State recovery ───────────────────────────────────────────────────────
-  const recoverOperatorState = useCallback(() => {
+  useEffect(() => {
     if (!currentProject) return
     const activeStudent = currentProject.database.find(
       (s) => s.assignedChannel === myChannel && isActiveStatus(s.status),
@@ -326,31 +332,31 @@ export function OperatorPanel() {
     if (activeStudent) setOpCurrentTarget(activeStudent)
   }, [currentProject, myChannel, setOpCurrentTarget])
 
-  useEffect(() => { recoverOperatorState() }, [recoverOperatorState])
-
   // ── Socket: MC_CALL ─────────────────────────────────────────────────────
   useEffect(() => {
     const handleMcCall = (data: McCallData) => {
-      if (data.channel !== myChannel) return
+      if (data.channel !== myChannelRef.current) return
       setOpCurrentTarget(data.student)
     }
     onLocal('MC_CALL', handleMcCall)
     return () => { offLocal('MC_CALL', handleMcCall) }
-  }, [myChannel, setOpCurrentTarget])
+  }, [setOpCurrentTarget])
 
   // ── Socket: SYNC_DB ─────────────────────────────────────────────────────
   useEffect(() => {
     const handleSyncDb = (data: SyncDbData) => {
-      if (!currentProject) return
-      updateCurrentProject({ ...currentProject, database: data.project.database })
+      const proj = currentProjectRef.current
+      if (!proj) return
+      updateCurrentProject({ ...proj, database: data.project.database, photoHistory: data.project.photoHistory ?? proj.photoHistory })
+      const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
-        (s: Student) => s.assignedChannel === myChannel && isActiveStatus(s.status),
+        (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
       )
       if (activeStudent) setOpCurrentTarget(activeStudent)
     }
     onLocal('SYNC_DB', handleSyncDb)
     return () => { offLocal('SYNC_DB', handleSyncDb) }
-  }, [currentProject, myChannel, setOpCurrentTarget, updateCurrentProject])
+  }, [setOpCurrentTarget, updateCurrentProject])
 
   // ── Finalize capture ────────────────────────────────────────────────────
   const finalizeCapture = useCallback(
@@ -375,11 +381,15 @@ export function OperatorPanel() {
         }
         updateStudentStatus(student.id, 'done')
         saveProjectsToStorage()
+        // Emit PHOTOS_SAVED with student status as 'done' so MC/Admin
+        // can immediately update their local stores without waiting for SYNC_DB
         emitLocal('PHOTOS_SAVED', {
-          student: { ...student },
+          student: { ...student, status: 'done' },
           photos: allPhotos,
           channel: myChannel,
         })
+        // Also emit operator progress to signal completion
+        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
         setTimeout(() => {
           const store = useSaatirilStore.getState()
           if (store.currentProject) {
@@ -398,7 +408,7 @@ export function OperatorPanel() {
             emitLocal('SYNC_DB', { project: updatedProject })
           }
           setSending(false)
-          setTimeout(() => { resetOpState() }, 500)
+          setTimeout(() => { resetOpState() }, 300)
         }, 100)
       }
     },

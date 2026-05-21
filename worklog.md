@@ -145,3 +145,67 @@ Stage Summary:
 - Repo: https://github.com/synclicen/Saatiril-Exe
 - Windows build: ✅ SUCCESS
 - No more port 3000 issues, no child process crashes, no infinite retries
+
+---
+Task ID: 5
+Agent: Main
+Task: Fix Bug 1 (MC panel stuck after photos saved) and Bug 2 (MC/operator browser refresh endless spinning)
+
+Work Log:
+- Traced the complete photo workflow: MC calls → Operator captures → PHOTOS_SAVED → SYNC_DB → MC update
+- Identified multiple root causes for Bug 1:
+  1. MC panel's SYNC_DB handler was an empty no-op — never updated the store
+  2. MC panel had NO PHOTOS_SAVED listener — never knew when operator finished
+  3. MC panel had NO OP_PROGRESS listener — couldn't show real-time camera progress
+  4. Admin dashboard didn't clear liveTargets/cameraStatus when photos completed
+  5. Operator emitted PHOTOS_SAVED with student status as 'active_X' instead of 'done'
+  6. main-app.tsx SYNC_DB handler had currentProject in deps — caused re-registration race conditions
+  7. Admin dashboard's SYNC_DB handler used stale currentProject closure
+- Identified root causes for Bug 2:
+  1. No re-sync on socket reconnection
+  2. No state persistence recovery for MC/operator on page refresh
+  3. syncedFromServer flag prevented recovery even when localStorage had project data
+- Fixed mc-panel.tsx:
+  - Added proper SYNC_DB handler that updates store with new project data
+  - Added PHOTOS_SAVED listener that immediately marks student as 'done' in store
+  - Added OP_PROGRESS listener to show real-time camera status
+  - Added MC_CALL listener for multi-channel sync
+  - Used refs for stable event handlers (no re-registration on every project change)
+  - Shows operator progress text in "TUNGGU KAMERA..." button
+  - Shows real-time camera status next to active student name
+- Fixed admin-dashboard.tsx:
+  - Uses refs instead of currentProject in deps (stable handlers)
+  - PHOTOS_SAVED handler now also updates student status to 'done' in database
+  - PHOTOS_SAVED handler clears liveTargets and cameraStatus for the channel
+  - SYNC_DB handler detects when active students become done and clears live targets
+  - Removed currentProject from effect dependency array
+- Fixed main-app.tsx:
+  - Removed syncedFromServer state variable entirely
+  - isSynced is now derived: myRole === 'admin' || currentProject !== null
+  - This means MC/operator with a project from localStorage is immediately synced
+  - Added reconnection handler: on socket reconnect, re-requests state from admin
+  - Added localStorage recovery: loadProjectsFromStorage on mount for non-admin
+  - SYNC_DB handler uses refs (no currentProject in deps) — stable, no race conditions
+  - Unified handler for both admin and non-admin SYNC_DB
+- Fixed operator-panel.tsx:
+  - Uses refs for stable event handlers
+  - PHOTOS_SAVED now emits student with status 'done' so MC/Admin can update immediately
+  - Added OP_PROGRESS emit after photos saved to signal completion
+  - SYNC_DB handler includes photoHistory in the update
+  - Reduced resetOpState timeout from 500ms to 300ms for faster turnaround
+- Fixed mini-services/saatiril-socket/index.ts:
+  - Added maxHttpBufferSize: 10e6 (10MB) to handle large photo payloads
+  - Default 1MB was too small for base64-encoded JPEG photos
+
+Stage Summary:
+- Bug 1 FIXED: MC panel now properly updates when operator finishes capturing photos
+  - MC receives PHOTOS_SAVED immediately → marks student as done → button becomes "PANGGIL SEKARANG"
+  - MC receives OP_PROGRESS → shows real-time camera status ("Pose 1 OK", "Selesai", etc.)
+  - Admin dashboard clears camera status and target when photos complete
+- Bug 2 FIXED: MC/operator browser refresh no longer causes endless spinning
+  - On refresh, localStorage is loaded first → project is available immediately
+  - isSynced derived from currentProject !== null → no waiting screen if data exists
+  - On socket reconnect, REQUEST_STATE is re-emitted to get latest data from admin
+- Socket.io max payload increased from 1MB to 10MB for photo data
+- All event handlers use refs for stability — no more race conditions from re-registration
+- Lint passes cleanly

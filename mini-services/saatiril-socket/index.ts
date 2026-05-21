@@ -10,6 +10,9 @@ const io = new Server(httpServer, {
   },
   pingTimeout: 60000,
   pingInterval: 25000,
+  // Allow large payloads for photo data (base64-encoded images)
+  // Default is 1MB which is too small for photos
+  maxHttpBufferSize: 10e6, // 10MB
 })
 
 io.on('connection', (socket) => {
