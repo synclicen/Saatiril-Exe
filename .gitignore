@@ -53,7 +53,7 @@ skills/
 examples/
 agent-ctx/
 .zscripts/
-.github/
+# .github/ is needed for CI/CD workflows
 download/
 .claude
 .z-ai-config

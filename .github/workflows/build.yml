@@ -1,0 +1,123 @@
+# SAATIRIL — Windows Build Workflow
+# Builds the Electron desktop app as a Windows NSIS installer
+# Triggered on push to main or manual dispatch
+
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - ".gitignore"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Next.js static export
+        run: bun run build
+
+      - name: Verify static export
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "out/index.html")) {
+            Write-Error "Next.js static export failed — out/index.html not found"
+            exit 1
+          }
+          Write-Host "Static export OK — files found in out/"
+
+      - name: Build Electron (NSIS installer)
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem -Path "dist-electron" -Filter "*Setup*.exe" -ErrorAction SilentlyContinue
+          if (-not $setupExe) {
+            Write-Error "NSIS installer not found in dist-electron/"
+            exit 1
+          }
+          Write-Host "Installer found: $($setupExe.FullName)"
+          Write-Host "Size: $([math]::Round($setupExe.Length / 1MB, 2)) MB"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAATIRIL-Windows-Setup
+          path: dist-electron/*Setup*.exe
+          retention-days: 30
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAATIRIL-Windows-Portable
+          path: dist-electron/win-unpacked/
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $setupExe = (Get-ChildItem -Path "dist-electron" -Filter "*Setup*.exe").FullName
+
+          # Check if release already exists
+          $existingRelease = gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists — deleting and recreating"
+            gh release delete $tag --yes --repo $env:GITHUB_REPOSITORY
+          }
+
+          # Delete tag if exists
+          git tag -d $tag 2>$null
+          git push origin :refs/tags/$tag 2>$null
+
+          # Create release
+          gh release create $tag $setupExe `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "SAATIRIL v$version" `
+            --notes @"
+          SAATIRIL — Sistem Auto Track Input Raw into Live
+
+          Sistem tracking foto untuk prosesi wisuda.
+
+          ## Cara Penggunaan
+          1. Download dan jalankan SAATIRIL-Setup-$version.exe
+          2. Install aplikasi
+          3. Jalankan SAATIRIL dari Desktop/Start Menu
+          4. Untuk MC/Operator di perangkat lain, buka browser:
+             - MC: http://IP-KOMPUTER:3003/?role=mc&projectId=XXX
+             - Operator: http://IP-KOMPUTER:3003/?role=operator&projectId=XXX
+
+          ## Fitur
+          - 3 Role: Admin, MC, Operator Kamera
+          - Real-time communication via Socket.io
+          - Photo capture dengan effects & frames
+          - Preset Pro (High Contrast + Sharpening)
+          - Export foto dengan overlay frame
+          "@
