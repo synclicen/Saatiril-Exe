@@ -52,6 +52,7 @@ const PRESET_FILTERS: Record<string, string> = {
   original: 'none',
   studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
   cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
+  pro: 'contrast(1.25) brightness(1.05) saturate(1.15) sharpen(1)',
 }
 
 // ─── Ratio parser ───────────────────────────────────────────────────────────
@@ -66,6 +67,14 @@ function parseRatio(ratioStr: string): number {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+function sanitizeNama(nama: string): string {
+  return nama.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '')
+}
+
+function buildFilename(nim: string, nama: string, suffix: number, type: string): string {
+  return `${nim}_${sanitizeNama(nama)}_${suffix}_${type}.jpg`
+}
+
 function isActiveStatus(status: StudentStatus): boolean {
   return status.startsWith('active')
 }
@@ -401,6 +410,33 @@ export function OperatorPanel() {
         })
         // Also emit operator progress to signal completion
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
+
+        // ── Save photos to disk (Electron only) ────────────────────────────
+        const projConfig = useSaatirilStore.getState().currentProject?.config
+        if (projConfig) {
+          const api = window.saatirilAPI
+          if (api?.savePhoto) {
+            const targetFolder = projConfig.targetFolder
+            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
+            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+
+            // Save both photos in parallel (non-blocking)
+            Promise.all([
+              api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
+              api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
+            ]).then(([path1, path2]) => {
+              if (path1 && path2) {
+                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+              } else {
+                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
+              }
+            }).catch((err) => {
+              console.error('[SAATIRIL OP] Error saving photos to disk:', err)
+            })
+          } else {
+            console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
+          }
+        }
         setTimeout(() => {
           const store = useSaatirilStore.getState()
           if (store.currentProject) {

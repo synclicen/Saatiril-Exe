@@ -208,7 +208,25 @@ export default function AdminDashboard() {
   // ── Copy link handler ────────────────────────────────────────────
   const copyLink = useCallback(
     (role: string, channel: number) => {
-      const url = `${window.location.origin}/?role=${role}&channel=${channel}`
+      const api = window.saatirilAPI
+      const isElectron = api?.isElectron
+      const socketPort = isElectron
+        ? new URLSearchParams(window.location.search).get('socketPort') || '3003'
+        : null
+
+      let url: string
+      if (isElectron && socketPort) {
+        // Electron: include socketPort so the client knows where to connect
+        // Use LAN IP instead of saatiril:// protocol for other devices
+        const hostname = window.location.hostname
+        const effectiveHost = (hostname === 'localhost' || hostname === '127.0.0.1')
+          ? window.location.host  // Will use the LAN IP if accessed via LAN
+          : hostname
+        url = `http://${effectiveHost}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+      } else {
+        // Web/sandbox: just role & channel
+        url = `${window.location.origin}/?role=${role}&channel=${channel}`
+      }
       try {
         if (navigator.clipboard) {
           navigator.clipboard.writeText(url).then(

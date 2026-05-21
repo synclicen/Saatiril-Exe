@@ -275,6 +275,34 @@ ipcMain.handle('select-folder', async (event, defaultPath) => {
   return selectedPath
 })
 
+ipcMain.handle('save-photo', async (event, data) => {
+  // data: { base64Data: string, filename: string, targetFolder: string }
+  try {
+    const { base64Data, filename, targetFolder } = data
+    if (!base64Data || !filename || !targetFolder) {
+      console.error('[SAATIRIL] save-photo: missing required fields')
+      return null
+    }
+
+    // Ensure target folder exists
+    if (!fs.existsSync(targetFolder)) {
+      fs.mkdirSync(targetFolder, { recursive: true })
+    }
+
+    // Strip data URL prefix (data:image/jpeg;base64,)
+    const base64Raw = base64Data.replace(/^data:image\/\w+;base64,/, '')
+    const buffer = Buffer.from(base64Raw, 'base64')
+
+    const filePath = path.join(targetFolder, filename)
+    fs.writeFileSync(filePath, buffer)
+    console.log(`[SAATIRIL] Photo saved: ${filePath} (${(buffer.length / 1024).toFixed(1)}KB)`)
+    return filePath
+  } catch (e) {
+    console.error('[SAATIRIL] save-photo failed:', e.message)
+    return null
+  }
+})
+
 // ─── Handle custom protocol ─────────────────────────────────────────────────
 app.on('ready', async () => {
   // Register protocol handler for serving static files

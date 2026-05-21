@@ -19,4 +19,7 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
 
   /** Open native folder picker dialog — returns selected path or null */
   selectFolder: (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
+
+  /** Save a photo to disk — returns the saved file path or null */
+  savePhoto: (data) => ipcRenderer.invoke('save-photo', data),
 })

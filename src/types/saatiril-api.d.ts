@@ -5,6 +5,11 @@ interface SaatirilAPI {
   platform: string
   getVersion: () => Promise<string>
   selectFolder: (defaultPath?: string) => Promise<string | null>
+  savePhoto: (data: {
+    base64Data: string
+    filename: string
+    targetFolder: string
+  }) => Promise<string | null>
 }
 
 declare global {
