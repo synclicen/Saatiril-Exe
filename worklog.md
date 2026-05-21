@@ -209,3 +209,39 @@ Stage Summary:
 - Socket.io max payload increased from 1MB to 10MB for photo data
 - All event handlers use refs for stability — no more race conditions from re-registration
 - Lint passes cleanly
+
+---
+Task ID: 6
+Agent: Main
+Task: Fix MC panel stuck on "waiting for photos" after operator completes 2 photos
+
+Work Log:
+- Deep investigation of the complete event flow: Operator captures → PHOTOS_SAVED → Socket.io relay → MC receives
+- Identified ROOT CAUSE #1 (CRITICAL): Socket.io client in socket.ts was connecting to `/` in web/sandbox mode, but it MUST connect to `/?XTransformPort=3003` so the Caddy gateway routes traffic to the Socket.io server at port 3003. Without this, MC and Operator couldn't communicate across browser tabs — events were lost.
+- Identified ROOT CAUSE #2 (CRITICAL): Socket.io client was missing `path: '/'` option, which is required to match the server's `path: '/'` configuration. Default Socket.io path is `/socket.io`, causing a path mismatch and connection failure.
+- Identified ROOT CAUSE #3: operator-panel.tsx `finalizeCapture` used stale closure values for `opCapturedPhotos.length` instead of reading current Zustand state. While this worked in practice (React re-renders between clicks), it was fragile and could cause race conditions.
+- Fixed socket.ts:
+  - Changed web/sandbox socket URL from `/` to `/?XTransformPort=3003`
+  - Added `path: '/'` to web/sandbox socket options to match server config
+  - Added comments explaining the Caddy gateway routing requirement
+- Fixed operator-panel.tsx:
+  - Changed `finalizeCapture` to read state from `useSaatirilStore.getState()` instead of closure values
+  - This eliminates the stale closure issue entirely
+  - Added console.log debugging for photo capture flow
+  - Removed `opCapturedPhotos` and `opCurrentTarget` from useCallback dependency array (no longer needed from closure)
+- Fixed mc-panel.tsx:
+  - Added console.log debugging to PHOTOS_SAVED and OP_PROGRESS handlers
+  - This helps trace event flow in browser console during testing
+- Verified Socket.io connectivity through Caddy gateway:
+  - `curl "http://localhost:81/?XTransformPort=3003&EIO=4&transport=polling"` returns valid Socket.io session
+  - Next.js returns 200 through Caddy gateway
+- Lint passes cleanly with no errors
+
+Stage Summary:
+- CRITICAL FIX: Socket.io client now properly connects to the Socket.io server via Caddy gateway
+  - URL: `/?XTransformPort=3003` (was `/`)
+  - Path: `/` (was missing, defaulted to `/socket.io` which didn't match server)
+- This was the root cause: MC and Operator tabs couldn't communicate because socket events were never relayed
+- Operator panel race condition fixed: Uses `useSaatirilStore.getState()` for real-time state reads
+- Debug logging added for easier troubleshooting in production
+- All lint checks pass

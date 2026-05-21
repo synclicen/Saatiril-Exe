@@ -137,13 +137,18 @@ export function McPanel() {
   // ── Socket: PHOTOS_SAVED — operator finished capturing 2 photos ────────
   useEffect(() => {
     const handlePhotosSaved = (data: PhotosSavedData) => {
-      if (data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel, 'myChannel:', myChannelRef.current)
+
+      if (data.channel !== myChannelRef.current) {
+        console.log('[SAATIRIL MC] PHOTOS_SAVED ignored: channel mismatch')
+        return
+      }
 
       // Immediately mark student as 'done' in our local store
       updateStudentStatus(data.student.id, 'done')
       saveProjectsToStorage()
 
-      // Clear operator progress text
+      // Clear operator progress text — photos are done!
       setOpProgressText('')
 
       // Also update the full project to sync photoHistory
@@ -172,6 +177,7 @@ export function McPanel() {
           photoHistory: newHistory,
         }
         updateCurrentProject(updatedProject)
+        console.log('[SAATIRIL MC] Project updated, student marked as done. Next pending should appear.')
       }
     }
 
@@ -183,6 +189,7 @@ export function McPanel() {
   useEffect(() => {
     const handleOpProgress = (data: OpProgressData) => {
       if (data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL MC] OP_PROGRESS:', data.status)
       setOpProgressText(data.status)
     }
 

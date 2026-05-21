@@ -17,6 +17,7 @@ const listeners: Record<string, LocalNetworkCallback[]> = {}
  *
  * In web/sandbox mode:
  *   - Use XTransformPort=3003 for Caddy gateway routing
+ *   - Path must be '/' to match the server's path config
  */
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '/'
@@ -32,7 +33,8 @@ function getSocketUrl(): string {
   }
   
   // Web/sandbox mode: use Caddy gateway with XTransformPort
-  return '/'
+  // DO NOT change the path, it is used by Caddy to forward the request to the correct port
+  return '/?XTransformPort=3003'
 }
 
 export function getSocket(): Socket | null {
@@ -57,6 +59,8 @@ export function connectSocket(): Socket {
       }
     : {
         // Web/sandbox: use Caddy gateway
+        // Path must be '/' to match the server's path config
+        path: '/',
         transports: ['websocket', 'polling'],
         forceNew: true,
         reconnection: true,

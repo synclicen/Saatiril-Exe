@@ -366,14 +366,22 @@ export function OperatorPanel() {
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       addOpCapturedPhoto(dataUrl)
-      const photoCount = opCapturedPhotos.length
 
-      if (photoCount === 0) {
-        emitLocal('OP_PROGRESS', { channel: myChannel, status: `Pose 1 OK — Siap Foto 2` })
-      } else if (photoCount >= 1) {
+      // Read CURRENT state from Zustand directly (not closure) to avoid stale values
+      const currentPhotos = useSaatirilStore.getState().opCapturedPhotos
+      const currentTarget = useSaatirilStore.getState().opCurrentTarget
+      const photoCount = currentPhotos.length
+
+      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'opCapturedPhotos =', currentPhotos.length)
+
+      if (photoCount === 1) {
+        // First photo just added (was 0, now 1)
+        emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
+      } else if (photoCount >= 2) {
+        // Second photo just added (was 1, now 2) — finalize
         setSending(true)
-        const student = opCurrentTarget!
-        const allPhotos = [...opCapturedPhotos, dataUrl]
+        const student = currentTarget!
+        const allPhotos = [...currentPhotos]
         const historyItem: PhotoHistoryItem = {
           student: { ...student },
           photos: allPhotos,
@@ -381,6 +389,9 @@ export function OperatorPanel() {
         }
         updateStudentStatus(student.id, 'done')
         saveProjectsToStorage()
+
+        console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
+
         // Emit PHOTOS_SAVED with student status as 'done' so MC/Admin
         // can immediately update their local stores without waiting for SYNC_DB
         emitLocal('PHOTOS_SAVED', {
@@ -412,7 +423,7 @@ export function OperatorPanel() {
         }, 100)
       }
     },
-    [opCurrentTarget, opCapturedPhotos, myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorage, resetOpState],
+    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorage, resetOpState],
   )
 
   // ── Photo capture logic ──────────────────────────────────────────────────
