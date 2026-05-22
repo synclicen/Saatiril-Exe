@@ -207,65 +207,100 @@ export default function AdminDashboard() {
 
   // ── Copy link handler ────────────────────────────────────────────
   const copyLink = useCallback(
-    (role: string, channel: number) => {
+    async (role: string, channel: number) => {
       const api = window.saatirilAPI
       const isElectron = api?.isElectron
-      const socketPort = isElectron
-        ? new URLSearchParams(window.location.search).get('socketPort') || '3003'
-        : null
 
       let url: string
-      if (isElectron && socketPort) {
-        // Electron: include socketPort so the client knows where to connect
-        // Use LAN IP instead of saatiril:// protocol for other devices
-        const hostname = window.location.hostname
-        const effectiveHost = (hostname === 'localhost' || hostname === '127.0.0.1')
-          ? window.location.host  // Will use the LAN IP if accessed via LAN
-          : hostname
-        url = `http://${effectiveHost}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+
+      if (isElectron) {
+        // Electron: get LAN IP and socket port
+        const socketPort =
+          new URLSearchParams(window.location.search).get('socketPort') || '3003'
+        let lanIP = ''
+
+        // Try to get LAN IPs from Electron IPC (most reliable)
+        if (api?.getLanIPs) {
+          try {
+            const ips = await api.getLanIPs()
+            if (ips && ips.length > 0) {
+              lanIP = ips[0].address
+            }
+          } catch (e) {
+            console.warn('[SAATIRIL] Failed to get LAN IPs via IPC:', e)
+          }
+        }
+
+        // Fallback: try WebRTC to detect LAN IP
+        if (!lanIP) {
+          try {
+            lanIP = await new Promise<string>((resolve) => {
+              const pc = new RTCPeerConnection({ iceServers: [] })
+              pc.createDataChannel('')
+              pc.createOffer().then((offer) => pc.setLocalDescription(offer))
+              pc.onicecandidate = (e) => {
+                if (!e.candidate) return
+                const parts = e.candidate.candidate.split(' ')
+                const ip = parts[4]
+                if (
+                  ip &&
+                  /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) &&
+                  !ip.startsWith('0.') &&
+                  ip !== '0.0.0.0'
+                ) {
+                  pc.close()
+                  resolve(ip)
+                }
+              }
+              setTimeout(() => {
+                pc.close()
+                resolve('')
+              }, 3000)
+            })
+          } catch {
+            // WebRTC not available
+          }
+        }
+
+        // Fallback: use hostname if not localhost
+        if (!lanIP) {
+          const hostname = window.location.hostname
+          if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            lanIP = hostname
+          }
+        }
+
+        if (lanIP) {
+          // External device accesses the Electron server directly
+          // The HTTP server serves both static files AND Socket.io
+          url = `http://${lanIP}:${socketPort}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        } else {
+          // Can't determine IP — show placeholder
+          url = `http://IP_KOMPUTER_ANDA:${socketPort}/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+        }
       } else {
-        // Web/sandbox: just role & channel
+        // Web/sandbox: use current origin
         url = `${window.location.origin}/?role=${role}&channel=${channel}`
       }
+
+      // Copy to clipboard
       try {
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).then(
-            () => {
-              toast({
-                title: 'Link disalin!',
-                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-              })
-            },
-            () => {
-              const textarea = document.createElement('textarea')
-              textarea.value = url
-              document.body.appendChild(textarea)
-              textarea.select()
-              document.execCommand('copy')
-              document.body.removeChild(textarea)
-              toast({
-                title: 'Link disalin!',
-                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-              })
-            },
-          )
-        } else {
-          const textarea = document.createElement('textarea')
-          textarea.value = url
-          document.body.appendChild(textarea)
-          textarea.select()
-          document.execCommand('copy')
-          document.body.removeChild(textarea)
-          toast({
-            title: 'Link disalin!',
-            description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-          })
-        }
-      } catch {
+        await navigator.clipboard.writeText(url)
         toast({
-          title: 'Gagal menyalin',
-          description: 'Tidak dapat menyalin link. Silakan salin manual.',
-          variant: 'destructive',
+          title: 'Link disalin!',
+          description: `${role.toUpperCase()} ${channel > 0 ? `Ch.${channel}` : ''} — ${url}`,
+        })
+      } catch {
+        // Fallback: use textarea trick
+        const textarea = document.createElement('textarea')
+        textarea.value = url
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        toast({
+          title: 'Link disalin!',
+          description: `${role.toUpperCase()} ${channel > 0 ? `Ch.${channel}` : ''} — ${url}`,
         })
       }
     },

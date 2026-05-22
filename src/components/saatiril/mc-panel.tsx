@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera } from 'lucide-react'
+import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
@@ -66,7 +66,7 @@ interface OpProgressData {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
-export function McPanel() {
+export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const myChannel = useSaatirilStore((s) => s.myChannel)
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
@@ -249,6 +249,25 @@ export function McPanel() {
 
   // ── Render helpers ──────────────────────────────────────────────────────
   const renderCallButton = () => {
+    // Admin in monitor mode: show read-only indicator
+    if (readOnly) {
+      return (
+        <Button
+          disabled
+          className="w-full h-14 text-lg font-bold cursor-not-allowed"
+          style={{
+            backgroundColor: THEME.panel,
+            color: THEME.muted,
+            border: `2px solid ${THEME.border}`,
+            opacity: 0.7,
+          }}
+        >
+          <Monitor className="size-5" />
+          MONITOR — Hanya Pantauan
+        </Button>
+      )
+    }
+
     if (isPhotographing) {
       return (
         <Button

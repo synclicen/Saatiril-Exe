@@ -10,6 +10,7 @@ interface SaatirilAPI {
     filename: string
     targetFolder: string
   }) => Promise<string | null>
+  getLanIPs: () => Promise<Array<{ name: string; address: string }>>
 }
 
 declare global {

@@ -22,4 +22,7 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
 
   /** Save a photo to disk — returns the saved file path or null */
   savePhoto: (data) => ipcRenderer.invoke('save-photo', data),
+
+  /** Get LAN IP addresses — returns array of {name, address} */
+  getLanIPs: () => ipcRenderer.invoke('get-lan-ips'),
 })

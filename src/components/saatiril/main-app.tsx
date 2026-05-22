@@ -323,9 +323,9 @@ export function MainApp() {
       case 'admin':
         return <AdminDashboard />
       case 'mc':
-        return <McPanel />
+        return <McPanel readOnly={myRole === 'admin'} />
       case 'operator':
-        return <OperatorPanel />
+        return <OperatorPanel readOnly={myRole === 'admin'} />
     }
   }
 

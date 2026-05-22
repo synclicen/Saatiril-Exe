@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  Monitor,
   User,
   Video,
   VideoOff,
@@ -52,7 +53,11 @@ const PRESET_FILTERS: Record<string, string> = {
   original: 'none',
   studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
   cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
-  pro: 'contrast(1.25) brightness(1.05) saturate(1.15) sharpen(1)',
+  pro: 'contrast(1.25) brightness(1.05) saturate(1.15)',
+  vivid: 'saturate(1.4) contrast(1.1) brightness(1.05)',
+  portrait: 'brightness(1.08) contrast(0.95) saturate(0.9) sepia(0.05)',
+  bw: 'grayscale(1) contrast(1.15) brightness(1.05)',
+  graduation: 'brightness(1.06) contrast(1.08) saturate(1.12) sepia(0.04)',
 }
 
 // ─── Ratio parser ───────────────────────────────────────────────────────────
@@ -141,7 +146,7 @@ interface SyncDbData {
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
-export function OperatorPanel() {
+export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Store ────────────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const myChannel = useSaatirilStore((s) => s.myChannel)
@@ -844,7 +849,23 @@ export function OperatorPanel() {
 
         {/* ── Capture Button ────────────────────────────────────────────── */}
         <div className="shrink-0">
-          {capturePhase === 'standby' && (
+          {readOnly && (
+            <Button
+              disabled
+              className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
+              style={{
+                backgroundColor: THEME.panel,
+                color: THEME.muted,
+                border: `2px solid ${THEME.border}`,
+                opacity: 0.7,
+              }}
+            >
+              <Monitor className="size-4 mr-2" />
+              MONITOR — Hanya Pantauan
+            </Button>
+          )}
+
+          {!readOnly && capturePhase === 'standby' && (
             <Button
               disabled
               className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
@@ -860,7 +881,7 @@ export function OperatorPanel() {
             </Button>
           )}
 
-          {capturePhase === 'ready-1' && (
+          {!readOnly && capturePhase === 'ready-1' && (
             <Button
               onClick={handleCapture}
               className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
@@ -876,7 +897,7 @@ export function OperatorPanel() {
             </Button>
           )}
 
-          {capturePhase === 'ready-2' && (
+          {!readOnly && capturePhase === 'ready-2' && (
             <Button
               onClick={handleCapture}
               className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
@@ -892,7 +913,7 @@ export function OperatorPanel() {
             </Button>
           )}
 
-          {capturePhase === 'sending' && (
+          {!readOnly && capturePhase === 'sending' && (
             <Button
               disabled
               className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"

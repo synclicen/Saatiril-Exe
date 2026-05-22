@@ -86,7 +86,56 @@ async function startSocketServer() {
   socketPort = await findAvailablePort(3003)
   console.log(`[SAATIRIL] Using Socket.io port: ${socketPort}`)
 
-  httpServer = createServer()
+  httpServer = createServer((req, res) => {
+    // Serve static files for external devices (MC/Operator on other devices)
+    const urlPath = (req.url || '/').split('?')[0]
+
+    // Let Socket.io handle its own paths
+    if (urlPath.startsWith('/socket.io')) return
+
+    let filePath = urlPath
+    if (filePath === '/' || filePath === '') filePath = '/index.html'
+    if (filePath.startsWith('/')) filePath = filePath.slice(1)
+
+    const fullPath = path.join(STATIC_DIR, filePath)
+    const ext = path.extname(fullPath).toLowerCase()
+
+    const mimeTypes = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.svg': 'image/svg+xml',
+      '.ico': 'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+      '.ttf': 'font/ttf',
+      '.webp': 'image/webp',
+      '.map': 'application/json; charset=utf-8',
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        // Try serving index.html for SPA routing
+        const indexPath = path.join(STATIC_DIR, 'index.html')
+        fs.readFile(indexPath, (indexErr, indexData) => {
+          if (indexErr) {
+            res.writeHead(404)
+            res.end('Not Found')
+          } else {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(indexData)
+          }
+        })
+      } else {
+        res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' })
+        res.end(data)
+      }
+    })
+  })
   io = new Server(httpServer, {
     path: '/',
     cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -222,7 +271,7 @@ function createMainWindow() {
               title: 'IP Address LAN',
               message: 'Perangkat lain dapat mengakses SAATIRIL di:',
               detail: ips.length > 0
-                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:3000`).join('\n')
+                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:${socketPort}`).join('\n')
                 : 'Tidak ada jaringan LAN terdeteksi',
             })
           },
@@ -301,6 +350,10 @@ ipcMain.handle('save-photo', async (event, data) => {
     console.error('[SAATIRIL] save-photo failed:', e.message)
     return null
   }
+})
+
+ipcMain.handle('get-lan-ips', () => {
+  return getLocalIPs()
 })
 
 // ─── Handle custom protocol ─────────────────────────────────────────────────

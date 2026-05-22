@@ -42,6 +42,11 @@ export function getConnectionHealth(): ConnectionHealth {
  *   - Read socketPort from URL query parameter (passed by Electron main process)
  *   - Connect directly to localhost:PORT (no Caddy gateway)
  *
+ * External device on LAN (served by Electron HTTP server):
+ *   - The page was loaded from http://LAN_IP:PORT/ via the Electron server
+ *   - Connect to the same origin (which IS the socket server)
+ *   - Detected by: not Electron, but URL has socketPort param or non-standard port
+ *
  * In web/sandbox mode:
  *   - Use XTransformPort=3003 for Caddy gateway routing
  *   - Path must be '/' to match the server's path config
@@ -57,6 +62,23 @@ function getSocketUrl(): string {
     const params = new URLSearchParams(window.location.search)
     const port = params.get('socketPort') || '3003'
     return `http://localhost:${port}`
+  }
+
+  // Check if we're being served by the Electron server (external device on LAN)
+  // Case 1: URL has a socketPort query parameter (from copyLink)
+  const params = new URLSearchParams(window.location.search)
+  const socketPortParam = params.get('socketPort')
+  if (socketPortParam) {
+    // We have a socketPort parameter — we're an external device connecting to Electron
+    // The current origin is the Electron server, connect directly
+    return window.location.origin
+  }
+
+  // Case 2: Current port is non-standard (not Next.js dev server, not standard web ports)
+  // This means we're likely being served by the Electron HTTP server directly
+  const currentPort = window.location.port
+  if (currentPort && !['3000', '80', '443', ''].includes(currentPort)) {
+    return window.location.origin
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort

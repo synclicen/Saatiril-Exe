@@ -284,6 +284,9 @@ export default function ProjectSetup() {
 
     const projectId = `PRJ_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 
+    // Auto-create sub-folder based on project name
+    const projectSubFolder = `${targetFolder}\\${projectName.trim().replace(/[^a-zA-Z0-9_\- ]/g, '')}`
+
     const project = {
       id: projectId,
       name: projectName.trim(),
@@ -291,7 +294,7 @@ export default function ProjectSetup() {
         mode: cameraMode,
         ratio,
         preset,
-        targetFolder,
+        targetFolder: projectSubFolder,
         frame: frameData,
       },
       database: finalStudents,
@@ -417,7 +420,7 @@ export default function ProjectSetup() {
 
       <div className="relative z-10 flex h-full flex-col">
         {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <header className="flex items-center gap-4 border-b border-[#533485]/50 px-6 py-4">
+        <header className="flex items-center gap-3 border-b border-[#533485]/50 px-5 py-3">
           <Button
             variant="ghost"
             size="icon"
@@ -437,10 +440,10 @@ export default function ProjectSetup() {
         </header>
 
         {/* ── Main Content: 2-Column Layout ──────────────────────────────────── */}
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-2">
+        <main className="flex-1 overflow-y-auto p-4">
+          <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-2">
             {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4">
               {/* Project Name */}
               <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
                 <CardHeader className="pb-2">
@@ -559,7 +562,7 @@ export default function ProjectSetup() {
             </div>
 
             {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4">
               {/* Visual Camera Settings */}
               <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
                 <CardHeader className="pb-2">
@@ -568,7 +571,7 @@ export default function ProjectSetup() {
                     Pengaturan Visual Kamera
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-5">
+                <CardContent className="space-y-3">
                   {/* Photo Ratio */}
                   <div className="space-y-2">
                     <Label className="text-sm font-medium text-[#c4b5fd]">
@@ -606,13 +609,25 @@ export default function ProjectSetup() {
                           Original Sensor
                         </SelectItem>
                         <SelectItem value="studio" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Studio Bright
+                          Studio Bright — Clean & Balanced
                         </SelectItem>
                         <SelectItem value="cinematic" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Cinematic Gold
+                          Cinematic Gold — Warm Cinematic
                         </SelectItem>
                         <SelectItem value="pro" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           Preset Pro — High Contrast + Sharpening
+                        </SelectItem>
+                        <SelectItem value="vivid" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Vivid Pop — Saturated & Vibrant
+                        </SelectItem>
+                        <SelectItem value="portrait" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Portrait Soft — Skin Tone Optimized
+                        </SelectItem>
+                        <SelectItem value="bw" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          B&W Classic — Monochrome Drama
+                        </SelectItem>
+                        <SelectItem value="graduation" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Graduation Pro — Ceremony Optimized
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -728,7 +743,7 @@ export default function ProjectSetup() {
                     </Button>
                   </div>
                   <p className="mt-2 text-xs text-[#533485]">
-                    Folder akan dibuat otomatis jika belum ada (pada versi desktop).
+                    Sub-folder berdasarkan nama proyek akan dibuat otomatis. Folder akan dibuat otomatis jika belum ada (pada versi desktop).
                   </p>
                 </CardContent>
               </Card>
@@ -737,7 +752,7 @@ export default function ProjectSetup() {
         </main>
 
         {/* ── Bottom: Start Button ─────────────────────────────────────────── */}
-        <footer className="border-t border-[#533485]/50 px-6 py-5">
+        <footer className="border-t border-[#533485]/50 px-5 py-3">
           <div className="mx-auto flex max-w-6xl items-center justify-between">
             <div className="text-sm text-[#c4b5fd]">
               {!isNameValid && (
