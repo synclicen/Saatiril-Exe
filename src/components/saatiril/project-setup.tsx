@@ -284,8 +284,11 @@ export default function ProjectSetup() {
 
     const projectId = `PRJ_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 
-    // Auto-create sub-folder based on project name
-    const projectSubFolder = `${targetFolder}\\${projectName.trim().replace(/[^a-zA-Z0-9_\- ]/g, '')}`
+    // Create subfolder based on project name under target folder
+    const sanitizedName = projectName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')
+    const finalTargetFolder = targetFolder
+      ? `${targetFolder.replace(/[\\/]+$/, '')}\\${sanitizedName}`
+      : `C:\\SAATIRIL_System_Out\\${sanitizedName}`
 
     const project = {
       id: projectId,
@@ -294,7 +297,7 @@ export default function ProjectSetup() {
         mode: cameraMode,
         ratio,
         preset,
-        targetFolder: projectSubFolder,
+        targetFolder: finalTargetFolder,
         frame: frameData,
       },
       database: finalStudents,
@@ -420,20 +423,20 @@ export default function ProjectSetup() {
 
       <div className="relative z-10 flex h-full flex-col">
         {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <header className="flex items-center gap-3 border-b border-[#533485]/50 px-5 py-3">
+        <header className="flex items-center gap-3 border-b border-[#533485]/50 px-5 py-2.5">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setCurrentScreen('hub')}
             className="text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="text-base font-bold text-white">
               <span className="text-[#d4af37]">SAATIRIL</span> — Buat Proyek Baru
             </h1>
-            <p className="text-sm text-[#c4b5fd]">
+            <p className="text-xs text-[#c4b5fd]">
               Konfigurasi sistem fotografi event Anda
             </p>
           </div>
@@ -443,7 +446,7 @@ export default function ProjectSetup() {
         <main className="flex-1 overflow-y-auto p-4">
           <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-2">
             {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               {/* Project Name */}
               <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
                 <CardHeader className="pb-2">
@@ -562,7 +565,7 @@ export default function ProjectSetup() {
             </div>
 
             {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               {/* Visual Camera Settings */}
               <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
                 <CardHeader className="pb-2">
@@ -571,7 +574,7 @@ export default function ProjectSetup() {
                     Pengaturan Visual Kamera
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="space-y-5">
                   {/* Photo Ratio */}
                   <div className="space-y-2">
                     <Label className="text-sm font-medium text-[#c4b5fd]">
@@ -606,28 +609,31 @@ export default function ProjectSetup() {
                       </SelectTrigger>
                       <SelectContent className="border-[#533485] bg-[#2a164a]">
                         <SelectItem value="original" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Original Sensor
+                          Original Sensor — Tanpa Filter
                         </SelectItem>
                         <SelectItem value="studio" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Studio Bright — Clean & Balanced
+                          Studio Bright — Cahaya Studio Hangat
                         </SelectItem>
                         <SelectItem value="cinematic" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Cinematic Gold — Warm Cinematic
+                          Cinematic Gold — Tone Sinematik Emas
                         </SelectItem>
                         <SelectItem value="pro" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           Preset Pro — High Contrast + Sharpening
                         </SelectItem>
                         <SelectItem value="vivid" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Vivid Pop — Saturated & Vibrant
+                          Vivid — Warna Cerah & Kontras Tinggi
                         </SelectItem>
-                        <SelectItem value="portrait" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Portrait Soft — Skin Tone Optimized
+                        <SelectItem value="softPortrait" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Soft Portrait — Kulit Lembut & Hangat
                         </SelectItem>
-                        <SelectItem value="bw" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          B&W Classic — Monochrome Drama
+                        <SelectItem value="classicFilm" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Classic Film — Nuansa Film Vintage
                         </SelectItem>
-                        <SelectItem value="graduation" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Graduation Pro — Ceremony Optimized
+                        <SelectItem value="dramaticBW" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Dramatic B&W — Hitam Putih Dramatis
+                        </SelectItem>
+                        <SelectItem value="warmSunset" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          Warm Sunset — Tone Emas Sore Hari
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -743,8 +749,13 @@ export default function ProjectSetup() {
                     </Button>
                   </div>
                   <p className="mt-2 text-xs text-[#533485]">
-                    Sub-folder berdasarkan nama proyek akan dibuat otomatis. Folder akan dibuat otomatis jika belum ada (pada versi desktop).
+                    Subfolder berdasarkan nama proyek akan dibuat otomatis di dalam folder ini.
                   </p>
+                  {projectName.trim() && targetFolder && (
+                    <p className="mt-1 text-xs text-[#d4af37]/80">
+                      → {targetFolder.replace(/[\\/]+$/, '')}\\{projectName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </div>

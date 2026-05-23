@@ -49,15 +49,26 @@ const THEME = {
 } as const
 
 // ─── Filter preset map ──────────────────────────────────────────────────────
+// Professional presets inspired by Lightroom parameters
+// Each preset uses CSS filter combinations: brightness, contrast, saturate, sepia, hue-rotate
 const PRESET_FILTERS: Record<string, string> = {
   original: 'none',
+  // Warm & bright — studio lighting feel
   studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
+  // Cinematic golden tones
   cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
+  // Pro high contrast with slight sharpening simulation
   pro: 'contrast(1.25) brightness(1.05) saturate(1.15)',
-  vivid: 'saturate(1.4) contrast(1.1) brightness(1.05)',
-  portrait: 'brightness(1.08) contrast(0.95) saturate(0.9) sepia(0.05)',
-  bw: 'grayscale(1) contrast(1.15) brightness(1.05)',
-  graduation: 'brightness(1.06) contrast(1.08) saturate(1.12) sepia(0.04)',
+  // Vivid — enhanced colors for outdoor/graduation settings
+  vivid: 'brightness(1.08) contrast(1.12) saturate(1.45) hue-rotate(5deg)',
+  // Soft Portrait — gentle warmth with reduced contrast for flattering skin
+  softPortrait: 'brightness(1.12) contrast(0.92) saturate(1.08) sepia(0.08)',
+  // Classic Film — vintage film look with muted highlights
+  classicFilm: 'brightness(1.02) contrast(1.15) saturate(0.85) sepia(0.2)',
+  // Dramatic B&W — high contrast black and white
+  dramaticBW: 'brightness(1.05) contrast(1.35) saturate(0) grayscale(1)',
+  // Warm Sunset — warm orange/golden tones
+  warmSunset: 'brightness(1.06) contrast(1.08) saturate(1.3) sepia(0.18) hue-rotate(-10deg)',
 }
 
 // ─── Ratio parser ───────────────────────────────────────────────────────────
@@ -849,23 +860,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
         {/* ── Capture Button ────────────────────────────────────────────── */}
         <div className="shrink-0">
-          {readOnly && (
-            <Button
-              disabled
-              className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
-              style={{
-                backgroundColor: THEME.panel,
-                color: THEME.muted,
-                border: `2px solid ${THEME.border}`,
-                opacity: 0.7,
-              }}
-            >
-              <Monitor className="size-4 mr-2" />
-              MONITOR — Hanya Pantauan
-            </Button>
-          )}
-
-          {!readOnly && capturePhase === 'standby' && (
+          {readOnly ? (
             <Button
               disabled
               className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
@@ -876,56 +871,74 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                 opacity: 0.6,
               }}
             >
-              <Aperture className="size-4 mr-2" />
-              STANDBY
+              <Monitor className="size-4 mr-2" />
+              MODE MONITOR — HANYA LIHAT
             </Button>
-          )}
+          ) : (
+            <>
+              {capturePhase === 'standby' && (
+                <Button
+                  disabled
+                  className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
+                  style={{
+                    backgroundColor: THEME.panel,
+                    color: THEME.muted,
+                    border: `2px solid ${THEME.border}`,
+                    opacity: 0.6,
+                  }}
+                >
+                  <Aperture className="size-4 mr-2" />
+                  STANDBY
+                </Button>
+              )}
 
-          {!readOnly && capturePhase === 'ready-1' && (
-            <Button
-              onClick={handleCapture}
-              className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-              style={{
-                backgroundColor: THEME.gold,
-                color: THEME.bg,
-                border: `2px solid ${THEME.gold}`,
-                boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
-              }}
-            >
-              <Camera className="size-4 mr-2" />
-              1. JEPRET (TOGA)
-            </Button>
-          )}
+              {capturePhase === 'ready-1' && (
+                <Button
+                  onClick={handleCapture}
+                  className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+                  style={{
+                    backgroundColor: THEME.gold,
+                    color: THEME.bg,
+                    border: `2px solid ${THEME.gold}`,
+                    boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
+                  }}
+                >
+                  <Camera className="size-4 mr-2" />
+                  1. JEPRET (TOGA)
+                </Button>
+              )}
 
-          {!readOnly && capturePhase === 'ready-2' && (
-            <Button
-              onClick={handleCapture}
-              className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-              style={{
-                backgroundColor: '#22c55e',
-                color: '#ffffff',
-                border: `2px solid #22c55e`,
-                boxShadow: `0 0 30px #22c55e44, 0 0 60px #22c55e22`,
-              }}
-            >
-              <Camera className="size-4 mr-2" />
-              2. JEPRET (IJAZAH)
-            </Button>
-          )}
+              {capturePhase === 'ready-2' && (
+                <Button
+                  onClick={handleCapture}
+                  className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+                  style={{
+                    backgroundColor: '#22c55e',
+                    color: '#ffffff',
+                    border: `2px solid #22c55e`,
+                    boxShadow: `0 0 30px #22c55e44, 0 0 60px #22c55e22`,
+                  }}
+                >
+                  <Camera className="size-4 mr-2" />
+                  2. JEPRET (IJAZAH)
+                </Button>
+              )}
 
-          {!readOnly && capturePhase === 'sending' && (
-            <Button
-              disabled
-              className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
-              style={{
-                backgroundColor: THEME.panel,
-                color: THEME.muted,
-                border: `2px solid ${THEME.border}`,
-              }}
-            >
-              <Loader2 className="size-4 mr-2 animate-spin" />
-              MENGIRIM...
-            </Button>
+              {capturePhase === 'sending' && (
+                <Button
+                  disabled
+                  className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
+                  style={{
+                    backgroundColor: THEME.panel,
+                    color: THEME.muted,
+                    border: `2px solid ${THEME.border}`,
+                  }}
+                >
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                  MENGIRIM...
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>

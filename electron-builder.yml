@@ -39,6 +39,7 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: SAATIRIL
   uninstallDisplayName: SAATIRIL
+  deleteAppDataOnUninstall: true
 
 # ─── Build metadata ──────────────────────────────────────────────────────────
 buildVersion: "1.0.0"

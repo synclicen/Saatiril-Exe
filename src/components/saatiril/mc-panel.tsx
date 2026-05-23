@@ -249,7 +249,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Render helpers ──────────────────────────────────────────────────────
   const renderCallButton = () => {
-    // Admin in monitor mode: show read-only indicator
     if (readOnly) {
       return (
         <Button
@@ -259,11 +258,11 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             backgroundColor: THEME.panel,
             color: THEME.muted,
             border: `2px solid ${THEME.border}`,
-            opacity: 0.7,
+            opacity: 0.6,
           }}
         >
           <Monitor className="size-5" />
-          MONITOR — Hanya Pantauan
+          MODE MONITOR — HANYA LIHAT
         </Button>
       )
     }

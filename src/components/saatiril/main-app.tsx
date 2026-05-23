@@ -131,13 +131,25 @@ export function MainApp() {
     }
   }, [])
 
+  // ── Detect HTTP port for LAN access ───────────────────────────────────────
+  const [httpPort, setHttpPort] = useState(3000)
+
+  useEffect(() => {
+    const api = window.saatirilAPI
+    if (api?.isElectron && api.getLanInfo) {
+      api.getLanInfo().then((info: { httpPort: number }) => {
+        setHttpPort(info.httpPort)
+      }).catch(() => {})
+    }
+  }, [])
+
   // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
-    navigator.clipboard.writeText(`http://${lanIP}:3000`)
+    navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
     setCopiedIP(true)
     setTimeout(() => setCopiedIP(false), 2000)
-  }, [lanIP])
+  }, [lanIP, httpPort])
 
   // ── URL parameter handling (run once on mount) ────────────────────────────
   useEffect(() => {
@@ -398,7 +410,7 @@ export function MainApp() {
               >
                 <Wifi className="size-3" style={{ color: THEME.gold }} />
                 <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
-                  {lanIP}:3000
+                  {lanIP}:{httpPort}
                 </span>
                 {copiedIP ? (
                   <Check className="size-3" style={{ color: '#22c55e' }} />

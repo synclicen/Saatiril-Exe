@@ -1,9 +1,16 @@
 /** Type declarations for the SAATIRIL Electron API exposed via preload.js */
 
+interface LanInfo {
+  httpPort: number
+  socketPort: number
+  ips: Array<{ name: string; address: string }>
+}
+
 interface SaatirilAPI {
   isElectron: boolean
   platform: string
   getVersion: () => Promise<string>
+  getLanInfo: () => Promise<LanInfo>
   selectFolder: (defaultPath?: string) => Promise<string | null>
   savePhoto: (data: {
     base64Data: string

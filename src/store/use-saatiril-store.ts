@@ -38,9 +38,6 @@ export type Role = 'admin' | 'mc' | 'operator'
 export type AppScreen = 'hub' | 'setup' | 'app'
 export type AppTab = 'admin' | 'mc' | 'operator'
 
-// ─── Storage version: clear stale data on reinstall/version change ────────────
-const STORAGE_VERSION = '1.0.0'
-
 // ─── Memory guard: max photo history items kept in memory ──────────────────
 // With thousands of participants, we can't keep all base64 photos in memory.
 // Admin keeps last N items for live gallery; MC/Operator only need current target.
@@ -137,13 +134,24 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
 
   loadProjectsFromStorage: () => {
     try {
-      // Version check — clear stale data on reinstall/version change
-      const savedVersion = localStorage.getItem('saatiril_version')
-      if (savedVersion !== STORAGE_VERSION) {
-        console.log('[SAATIRIL] Storage version mismatch — clearing stale data')
+      // Version check: clear stale data if app version changed (fresh install / update)
+      const storedVersion = localStorage.getItem('saatiril_app_version')
+      const currentVersion = typeof window !== 'undefined' && window.saatirilAPI?.getVersion
+        ? 'electron' // Electron builds — always check version on mount
+        : 'web'
+
+      if (!storedVersion) {
+        // First time or fresh install — clear any leftover data
         localStorage.removeItem('saatiril_projects')
-        localStorage.setItem('saatiril_version', STORAGE_VERSION)
-        set({ projects: [], currentProject: null })
+        localStorage.setItem('saatiril_app_version', currentVersion)
+        return
+      }
+
+      if (storedVersion !== currentVersion && currentVersion === 'electron') {
+        // Electron version changed — clear stale project data for clean state
+        console.log('[SAATIRIL] App version changed — clearing stale project data')
+        localStorage.removeItem('saatiril_projects')
+        localStorage.setItem('saatiril_app_version', currentVersion)
         return
       }
 

@@ -3,11 +3,13 @@
  *
  * Architecture: NO Next.js server needed!
  * - Next.js is built as static HTML/JS/CSS (output: 'export')
- * - Electron loads files via custom protocol (saatiril://)
- * - Socket.io server runs IN-PROCESS (no child process, no port 3000!)
+ * - Electron loads files via custom protocol (saatiril://) for admin window
+ * - HTTP static file server on port 3000 serves files for LAN devices (MC/Operator)
+ * - Socket.io server runs IN-PROCESS on port 3003
  * - Socket.io port is auto-detected and passed to renderer
  *
- * This eliminates ALL port conflict issues.
+ * MC/Operator on other devices access: http://<LAN_IP>:3000/?role=mc&channel=1&socketPort=3003
+ * Admin uses Electron window with saatiril:// protocol
  */
 
 const { app, BrowserWindow, Menu, dialog, shell, protocol, net, ipcMain } = require('electron')
@@ -27,6 +29,8 @@ let mainWindow = null
 let io = null
 let httpServer = null
 let socketPort = 3003
+let httpPort = 3000
+let staticFileServer = null
 
 // ─── Utility: Get local network IPs ─────────────────────────────────────────
 function getLocalIPs() {
@@ -78,6 +82,95 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
+// ─── MIME types for static file server ──────────────────────────────────────
+const MIME_TYPES = {
+  '.html': 'text/html',
+  '.js':   'application/javascript',
+  '.mjs':  'application/javascript',
+  '.css':  'text/css',
+  '.json': 'application/json',
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif':  'image/gif',
+  '.svg':  'image/svg+xml',
+  '.ico':  'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2':'font/woff2',
+  '.ttf':  'font/ttf',
+  '.eot':  'application/vnd.ms-fontobject',
+  '.webp': 'image/webp',
+  '.webm': 'video/webm',
+  '.mp4':  'video/mp4',
+  '.map':  'application/json',
+  '.txt':  'text/plain',
+  '.xml':  'application/xml',
+}
+
+// ─── Start HTTP static file server for LAN access ──────────────────────────
+// Serves Next.js static export so MC/Operator devices on the LAN
+// can access the web interface at http://<LAN_IP>:3000/
+async function startStaticFileServer() {
+  httpPort = await findAvailablePort(3000)
+  console.log(`[SAATIRIL] Using HTTP static file port: ${httpPort}`)
+
+  staticFileServer = createServer((req, res) => {
+    // Parse URL — strip query params
+    const url = new URL(req.url, `http://${req.headers.host}`)
+    let filePath = url.pathname
+
+    // Normalize: remove leading slash, handle directory -> index.html
+    if (filePath.startsWith('/')) filePath = filePath.slice(1)
+    if (filePath === '' || filePath.endsWith('/')) {
+      filePath += 'index.html'
+    }
+
+    const fullPath = path.normalize(path.join(STATIC_DIR, filePath))
+
+    // Security: prevent directory traversal
+    if (!fullPath.startsWith(path.normalize(STATIC_DIR))) {
+      res.writeHead(403)
+      res.end('Forbidden')
+      return
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        // If file not found, serve index.html (for client-side routing)
+        const indexFile = path.join(STATIC_DIR, 'index.html')
+        fs.readFile(indexFile, (indexErr, indexData) => {
+          if (indexErr) {
+            res.writeHead(404)
+            res.end('Not Found')
+            return
+          }
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          res.end(indexData)
+        })
+        return
+      }
+
+      // Determine content type
+      const ext = path.extname(fullPath).toLowerCase()
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+      res.writeHead(200, { 'Content-Type': contentType })
+      res.end(data)
+    })
+  })
+
+  return new Promise((resolve, reject) => {
+    staticFileServer.listen(httpPort, '0.0.0.0', () => {
+      const ips = getLocalIPs()
+      console.log(`[SAATIRIL] HTTP static file server running on port ${httpPort}`)
+      if (ips.length > 0) {
+        console.log(`[SAATIRIL] MC/Operator can access at: http://${ips[0].address}:${httpPort}`)
+      }
+      resolve()
+    })
+    staticFileServer.on('error', reject)
+  })
+}
+
 // ─── Start Socket.io server (in-process, no child process) ─────────────────
 let totalMessagesRelayed = 0
 let totalConnections = 0
@@ -86,56 +179,7 @@ async function startSocketServer() {
   socketPort = await findAvailablePort(3003)
   console.log(`[SAATIRIL] Using Socket.io port: ${socketPort}`)
 
-  httpServer = createServer((req, res) => {
-    // Serve static files for external devices (MC/Operator on other devices)
-    const urlPath = (req.url || '/').split('?')[0]
-
-    // Let Socket.io handle its own paths
-    if (urlPath.startsWith('/socket.io')) return
-
-    let filePath = urlPath
-    if (filePath === '/' || filePath === '') filePath = '/index.html'
-    if (filePath.startsWith('/')) filePath = filePath.slice(1)
-
-    const fullPath = path.join(STATIC_DIR, filePath)
-    const ext = path.extname(fullPath).toLowerCase()
-
-    const mimeTypes = {
-      '.html': 'text/html; charset=utf-8',
-      '.js': 'application/javascript; charset=utf-8',
-      '.css': 'text/css; charset=utf-8',
-      '.json': 'application/json; charset=utf-8',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.svg': 'image/svg+xml',
-      '.ico': 'image/x-icon',
-      '.woff': 'font/woff',
-      '.woff2': 'font/woff2',
-      '.ttf': 'font/ttf',
-      '.webp': 'image/webp',
-      '.map': 'application/json; charset=utf-8',
-    }
-
-    fs.readFile(fullPath, (err, data) => {
-      if (err) {
-        // Try serving index.html for SPA routing
-        const indexPath = path.join(STATIC_DIR, 'index.html')
-        fs.readFile(indexPath, (indexErr, indexData) => {
-          if (indexErr) {
-            res.writeHead(404)
-            res.end('Not Found')
-          } else {
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-            res.end(indexData)
-          }
-        })
-      } else {
-        res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' })
-        res.end(data)
-      }
-    })
-  })
+  httpServer = createServer()
   io = new Server(httpServer, {
     path: '/',
     cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -226,7 +270,7 @@ function createMainWindow() {
               type: 'info',
               title: 'Tentang SAATIRIL',
               message: 'SAATIRIL — Sistem Auto Track Input Raw into Live',
-              detail: `Versi: ${app.getVersion()}\n\nSocket.io: Port ${socketPort}\n\nAkses perangkat lain di LAN:\n${ipList || 'Tidak ada jaringan LAN terdeteksi'}`,
+              detail: `Versi: ${app.getVersion()}\n\nHTTP: Port ${httpPort}\nSocket.io: Port ${socketPort}\n\nAkses perangkat lain di LAN:\n${ipList ? ips.map(ip => `  http://${ip.address}:${httpPort}`).join('\n') : 'Tidak ada jaringan LAN terdeteksi'}`,
             })
           },
         },
@@ -271,7 +315,7 @@ function createMainWindow() {
               title: 'IP Address LAN',
               message: 'Perangkat lain dapat mengakses SAATIRIL di:',
               detail: ips.length > 0
-                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:${socketPort}`).join('\n')
+                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:${httpPort}`).join('\n')
                 : 'Tidak ada jaringan LAN terdeteksi',
             })
           },
@@ -302,6 +346,15 @@ function createMainWindow() {
 // ─── IPC Handlers (must be registered before app.ready) ────────────────────
 ipcMain.handle('get-version', () => {
   return app.getVersion()
+})
+
+ipcMain.handle('get-lan-info', () => {
+  const ips = getLocalIPs()
+  return {
+    httpPort,
+    socketPort,
+    ips: ips.map(ip => ({ name: ip.name, address: ip.address })),
+  }
 })
 
 ipcMain.handle('select-folder', async (event, defaultPath) => {
@@ -352,10 +405,6 @@ ipcMain.handle('save-photo', async (event, data) => {
   }
 })
 
-ipcMain.handle('get-lan-ips', () => {
-  return getLocalIPs()
-})
-
 // ─── Handle custom protocol ─────────────────────────────────────────────────
 app.on('ready', async () => {
   // Register protocol handler for serving static files
@@ -373,6 +422,13 @@ app.on('ready', async () => {
     return net.fetch(`file://${fullPath}`)
   })
 
+  console.log('[SAATIRIL] Starting HTTP static file server...')
+  try {
+    await startStaticFileServer()
+  } catch (err) {
+    console.error('[SAATIRIL] Failed to start HTTP server:', err)
+  }
+
   console.log('[SAATIRIL] Starting Socket.io server...')
   try {
     await startSocketServer()
@@ -380,12 +436,55 @@ app.on('ready', async () => {
     console.error('[SAATIRIL] Failed to start Socket.io server:', err)
   }
 
+  // ── Fresh install detection ──────────────────────────────────────────────
+  // Write a session marker file. If the marker is missing, it means the app
+  // was freshly installed (or the userData dir was cleaned). We pass this
+  // info to the renderer so it can clear stale localStorage data.
+  const userDataPath = app.getPath('userData')
+  const sessionMarkerPath = path.join(userDataPath, '.saatiril_session')
+  let isFreshInstall = false
+  try {
+    if (fs.existsSync(sessionMarkerPath)) {
+      // Existing install — read the marker
+      const storedMarker = fs.readFileSync(sessionMarkerPath, 'utf8').trim()
+      const currentVersion = app.getVersion()
+      if (storedMarker !== currentVersion) {
+        // Version changed (update or reinstall) — mark as fresh
+        isFreshInstall = true
+        fs.writeFileSync(sessionMarkerPath, currentVersion)
+        console.log(`[SAATIRIL] Version changed (${storedMarker} → ${currentVersion}) — fresh install detected`)
+      }
+    } else {
+      // No marker file — first launch after install
+      isFreshInstall = true
+      fs.writeFileSync(sessionMarkerPath, app.getVersion())
+      console.log('[SAATIRIL] First launch detected — marking as fresh install')
+    }
+  } catch (e) {
+    console.error('[SAATIRIL] Session marker error:', e.message)
+  }
+
   createMainWindow()
 
   mainWindow.webContents.on('did-finish-load', () => {
     const ips = getLocalIPs()
     if (ips.length > 0) {
-      console.log(`[SAATIRIL] Perangkat lain bisa akses Socket.io di: ${ips[0].address}:${socketPort}`)
+      console.log(`[SAATIRIL] Perangkat lain bisa akses: http://${ips[0].address}:${httpPort}`)
+      console.log(`[SAATIRIL] Socket.io berjalan di: ${ips[0].address}:${socketPort}`)
+    }
+
+    // If fresh install, clear localStorage to ensure clean state
+    if (isFreshInstall) {
+      mainWindow.webContents.session.clearStorageData({
+        storages: ['localstorage'],
+      }).then(() => {
+        console.log('[SAATIRIL] Cleared localStorage for fresh install')
+        // Reload to apply clean state
+        const startUrl = `saatiril://localhost/index.html?socketPort=${socketPort}`
+        mainWindow.loadURL(startUrl)
+      }).catch((err) => {
+        console.error('[SAATIRIL] Failed to clear localStorage:', err.message)
+      })
     }
   })
 })
@@ -403,6 +502,7 @@ app.on('before-quit', () => {
   }
   if (io) io.close()
   if (httpServer) httpServer.close()
+  if (staticFileServer) staticFileServer.close()
 })
 
 // ─── Prevent crashes during ceremony ──────────────────────────────────────
