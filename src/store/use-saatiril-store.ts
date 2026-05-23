@@ -134,27 +134,20 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
 
   loadProjectsFromStorage: () => {
     try {
-      // Version check: clear stale data if app version changed (fresh install / update)
+      // Simple marker check: if no version marker, this is a fresh start
+      // (Electron main process handles version-change clearing before first load)
       const storedVersion = localStorage.getItem('saatiril_app_version')
-      const currentVersion = typeof window !== 'undefined' && window.saatirilAPI?.getVersion
-        ? 'electron' // Electron builds — always check version on mount
-        : 'web'
+      const isElectron = typeof window !== 'undefined' && !!(window as any).saatirilAPI?.isElectron
+      const currentVersion = isElectron ? 'electron' : 'web'
 
       if (!storedVersion) {
-        // First time or fresh install — clear any leftover data
+        // First time or fresh install — ensure clean state
         localStorage.removeItem('saatiril_projects')
         localStorage.setItem('saatiril_app_version', currentVersion)
         return
       }
 
-      if (storedVersion !== currentVersion && currentVersion === 'electron') {
-        // Electron version changed — clear stale project data for clean state
-        console.log('[SAATIRIL] App version changed — clearing stale project data')
-        localStorage.removeItem('saatiril_projects')
-        localStorage.setItem('saatiril_app_version', currentVersion)
-        return
-      }
-
+      // Load saved projects
       const saved = localStorage.getItem('saatiril_projects')
       if (saved) {
         const projects = JSON.parse(saved)

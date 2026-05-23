@@ -231,7 +231,11 @@ async function startSocketServer() {
 }
 
 // ─── Create main window ─────────────────────────────────────────────────────
-function createMainWindow() {
+// isFreshInstall is passed so we can clear localStorage BEFORE the first load
+// (not after, which caused an infinite reload loop)
+let freshInstallCleared = false
+
+function createMainWindow(isFreshInstall = false) {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -247,13 +251,28 @@ function createMainWindow() {
     },
   })
 
-  // Load the static Next.js app via custom protocol
-  // Pass socketPort so the renderer knows where to connect
   const startUrl = `saatiril://localhost/index.html?socketPort=${socketPort}`
-  mainWindow.loadURL(startUrl)
 
   if (isDev) {
     mainWindow.webContents.openDevTools()
+  }
+
+  // If fresh install, clear localStorage BEFORE the first page load
+  // This avoids the infinite reload loop that happened when clearing AFTER load
+  if (isFreshInstall && !freshInstallCleared) {
+    freshInstallCleared = true
+    console.log('[SAATIRIL] Fresh install — clearing localStorage before first load...')
+    mainWindow.webContents.session.clearStorageData({
+      storages: ['localstorage'],
+    }).then(() => {
+      console.log('[SAATIRIL] localStorage cleared — loading app...')
+      mainWindow.loadURL(startUrl)
+    }).catch((err) => {
+      console.error('[SAATIRIL] Failed to clear localStorage:', err.message)
+      mainWindow.loadURL(startUrl)
+    })
+  } else {
+    mainWindow.loadURL(startUrl)
   }
 
   // Build application menu
@@ -464,7 +483,9 @@ app.on('ready', async () => {
     console.error('[SAATIRIL] Session marker error:', e.message)
   }
 
-  createMainWindow()
+  // Pass isFreshInstall flag so createMainWindow can clear localStorage
+  // BEFORE the first page load (not after, which caused infinite reload loop)
+  createMainWindow(isFreshInstall)
 
   mainWindow.webContents.on('did-finish-load', () => {
     const ips = getLocalIPs()
@@ -472,20 +493,8 @@ app.on('ready', async () => {
       console.log(`[SAATIRIL] Perangkat lain bisa akses: http://${ips[0].address}:${httpPort}`)
       console.log(`[SAATIRIL] Socket.io berjalan di: ${ips[0].address}:${socketPort}`)
     }
-
-    // If fresh install, clear localStorage to ensure clean state
-    if (isFreshInstall) {
-      mainWindow.webContents.session.clearStorageData({
-        storages: ['localstorage'],
-      }).then(() => {
-        console.log('[SAATIRIL] Cleared localStorage for fresh install')
-        // Reload to apply clean state
-        const startUrl = `saatiril://localhost/index.html?socketPort=${socketPort}`
-        mainWindow.loadURL(startUrl)
-      }).catch((err) => {
-        console.error('[SAATIRIL] Failed to clear localStorage:', err.message)
-      })
-    }
+    // NOTE: No reload logic here! Fresh install clearing is done
+    // BEFORE the first load in createMainWindow() to avoid infinite loops.
   })
 })
 
