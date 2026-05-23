@@ -77,6 +77,7 @@ export function MainApp() {
   const setCurrentScreen = useSaatirilStore((s) => s.setCurrentScreen)
   const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
+  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [serverConnected, setServerConnected] = useState(false)
@@ -240,6 +241,8 @@ export function MainApp() {
         } else {
           updateCurrentProject(data.project)
         }
+        // Persist to localStorage so MC/Operator can recover on page refresh
+        saveProjectsToStorageNow()
       } else if (role === 'admin' && data.project) {
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
         if (curProj && data.project.id === curProj.id) {
@@ -268,7 +271,7 @@ export function MainApp() {
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('REQUEST_STATE', handleRequestState)
     }
-  }, [updateCurrentProject])
+  }, [updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Non-admin: load localStorage + request state from admin ────────────────
   useEffect(() => {
@@ -276,6 +279,13 @@ export function MainApp() {
 
     // Try to recover project from localStorage first (for reconnection/recovery)
     loadProjectsFromStorage()
+
+    // Recover currentProject from localStorage (for page refresh when admin is offline)
+    const store = useSaatirilStore.getState()
+    if (!store.currentProject && store.projects.length > 0) {
+      store.setCurrentProject(store.projects[0])
+      console.log('[SAATIRIL] MainApp: Recovered currentProject from localStorage for', myRole)
+    }
 
     // Request state from admin via socket
     emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })

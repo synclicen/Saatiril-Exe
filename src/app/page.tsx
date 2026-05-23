@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback, Component, ReactNode } from 'react'
+import { useEffect, useCallback, useLayoutEffect, Component, ReactNode } from 'react'
 import { useSaatirilStore } from '@/store/use-saatiril-store'
 import { ProjectHub } from '@/components/saatiril/project-hub'
 import ProjectSetup from '@/components/saatiril/project-setup'
@@ -76,9 +76,40 @@ export default function Home() {
   const currentScreen = useSaatirilStore((s) => s.currentScreen)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
 
+  // ── URL parameter routing for LAN clients (MC/Operator) ─────────────────
+  // Detect role from URL and bypass hub/setup screens for non-admin clients.
+  // useLayoutEffect ensures this runs before browser paint, preventing flash
+  // of the hub screen that the user should never see.
+  useLayoutEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const roleParam = params.get('role')
+    if (roleParam === 'mc' || roleParam === 'operator') {
+      const store = useSaatirilStore.getState()
+      store.setMyRole(roleParam)
+      const channelParam = params.get('channel')
+      if (channelParam) {
+        const ch = parseInt(channelParam, 10)
+        if (ch >= 1 && ch <= 2) store.setMyChannel(ch)
+      }
+      store.setCurrentScreen('app')
+      console.log(`[SAATIRIL] LAN client detected — role: ${roleParam}, channel: ${channelParam}`)
+    }
+  }, [])
+
   useEffect(() => {
     try {
       loadProjectsFromStorage()
+
+      // ── Recover currentProject from localStorage for LAN clients ────────
+      // MC/Operator may have previously received project data from admin
+      // and saved it to localStorage. On page refresh, recover it so they
+      // don't get stuck on "waiting for sync" when admin is temporarily offline.
+      const store = useSaatirilStore.getState()
+      if (store.myRole !== 'admin' && !store.currentProject && store.projects.length > 0) {
+        store.setCurrentProject(store.projects[0])
+        console.log('[SAATIRIL] Recovered currentProject from localStorage for', store.myRole)
+      }
+
       console.log('[SAATIRIL] App loaded — currentScreen:', useSaatirilStore.getState().currentScreen)
     } catch (e) {
       console.error('[SAATIRIL] Failed to load projects from storage on mount:', e)
