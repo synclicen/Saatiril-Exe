@@ -168,7 +168,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const resetOpState = useSaatirilStore((s) => s.resetOpState)
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
-  const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
+  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
@@ -413,7 +413,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           channel: myChannel,
         }
         updateStudentStatus(student.id, 'done')
-        saveProjectsToStorage()
+        saveProjectsToStorageNow()
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
@@ -475,7 +475,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         }, 100)
       }
     },
-    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorage, resetOpState],
+    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
   )
 
   // ── Photo capture logic ──────────────────────────────────────────────────

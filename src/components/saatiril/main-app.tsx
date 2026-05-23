@@ -280,6 +280,16 @@ export function MainApp() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBack = useCallback(() => {
+    // Save project state before navigating back to hub
+    const store = useSaatirilStore.getState()
+    if (store.currentProject) {
+      store.saveProjectsToStorageNow()
+    }
+    // Reset to admin role and tab when going back to hub
+    store.setMyRole('admin')
+    store.setCurrentTab('admin')
+    store.setMyChannel(1)
+    store.resetOpState()
     setCurrentScreen('hub')
   }, [setCurrentScreen])
 

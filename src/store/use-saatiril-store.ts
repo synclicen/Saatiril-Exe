@@ -81,6 +81,7 @@ interface SaatirilState {
   resetOpState: () => void
   loadProjectsFromStorage: () => void
   saveProjectsToStorage: () => void
+  saveProjectsToStorageNow: () => void
   updateStudentStatus: (studentId: string, status: StudentStatus) => void
 }
 
@@ -168,10 +169,24 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
         // Photo data is saved to disk by Operator's file save logic
         const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
         localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+        console.log('[SAATIRIL] Projects saved to localStorage (debounced)')
       } catch (e) {
         console.error('Failed to save projects to storage', e)
       }
     }, SAVE_DEBOUNCE_MS)
+  },
+
+   saveProjectsToStorageNow: () => {
+    // IMMEDIATE save — use before navigation to prevent data loss
+    if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
+    try {
+      const { projects } = get()
+      const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
+      localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
+      console.log('[SAATIRIL] Projects saved to localStorage (immediate)')
+    } catch (e) {
+      console.error('Failed to save projects to storage (immediate)', e)
+    }
   },
 
   updateStudentStatus: (studentId, status) => set((s) => {

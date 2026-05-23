@@ -16,6 +16,7 @@ const { app, BrowserWindow, Menu, dialog, shell, protocol, net, ipcMain } = requ
 const path = require('path')
 const os = require('os')
 const fs = require('fs')
+const { pathToFileURL } = require('url')
 const { createServer } = require('http')
 const { Server } = require('socket.io')
 
@@ -376,6 +377,11 @@ ipcMain.handle('get-lan-info', () => {
   }
 })
 
+ipcMain.handle('get-lan-ips', () => {
+  const ips = getLocalIPs()
+  return ips.map(ip => ({ name: ip.name, address: ip.address }))
+})
+
 ipcMain.handle('select-folder', async (event, defaultPath) => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -438,7 +444,9 @@ app.on('ready', async () => {
     }
 
     const fullPath = path.join(STATIC_DIR, filePath)
-    return net.fetch(`file://${fullPath}`)
+    // Use pathToFileURL for correct file:// URLs on Windows (backslash → forward slash)
+    const fileUrl = pathToFileURL(fullPath).href
+    return net.fetch(fileUrl)
   })
 
   console.log('[SAATIRIL] Starting HTTP static file server...')

@@ -49,7 +49,7 @@ export default function ProjectSetup() {
     addProject,
     setCurrentProject,
     setCurrentScreen,
-    saveProjectsToStorage,
+    saveProjectsToStorageNow,
   } = useSaatirilStore()
 
   // ── Form state ─────────────────────────────────────────────────────────────
@@ -306,17 +306,22 @@ export default function ProjectSetup() {
 
     addProject(project)
     setCurrentProject(project)
-    saveProjectsToStorage()
 
-    // Sync database over LAN
-    emitLocal('SYNC_DB', { projectId, database: finalStudents })
+    // IMMEDIATE save before navigation to prevent data loss on first launch
+    saveProjectsToStorageNow()
+
+    // Sync database over LAN — use correct data shape { project: Project }
+    emitLocal('SYNC_DB', { project })
 
     toast({
       title: 'Proyek Dibuat!',
       description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
     })
 
-    setCurrentScreen('app')
+    // Small delay to ensure state is persisted before navigation
+    setTimeout(() => {
+      setCurrentScreen('app')
+    }, 50)
   }, [
     canStart,
     cameraMode,
@@ -328,7 +333,7 @@ export default function ProjectSetup() {
     frameData,
     addProject,
     setCurrentProject,
-    saveProjectsToStorage,
+    saveProjectsToStorageNow,
     setCurrentScreen,
     toast,
   ])

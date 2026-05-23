@@ -34,7 +34,7 @@ export function ProjectHub() {
   const setCurrentProject = useSaatirilStore((s) => s.setCurrentProject)
   const setCurrentScreen = useSaatirilStore((s) => s.setCurrentScreen)
   const deleteProject = useSaatirilStore((s) => s.deleteProject)
-  const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
+  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   const { toast } = useToast()
 
@@ -55,14 +55,14 @@ export function ProjectHub() {
   const handleDeleteProject = useCallback(
     (id: string) => {
       deleteProject(id)
-      saveProjectsToStorage()
+      saveProjectsToStorageNow()
       setDeletingProjectId(null)
       toast({
         title: 'Proyek dihapus',
         description: 'Proyek berhasil dihapus dari daftar.',
       })
     },
-    [deleteProject, saveProjectsToStorage, toast]
+    [deleteProject, saveProjectsToStorageNow, toast]
   )
 
   const getCompletedCount = useCallback((project: Project) => {

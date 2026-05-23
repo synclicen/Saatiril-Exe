@@ -71,7 +71,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const myChannel = useSaatirilStore((s) => s.myChannel)
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
-  const saveProjectsToStorage = useSaatirilStore((s) => s.saveProjectsToStorage)
+  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   // ── Local UI state for operator progress ─────────────────────────────────
   const [opProgressText, setOpProgressText] = useState<string>('')
@@ -146,7 +146,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       // Immediately mark student as 'done' in our local store
       updateStudentStatus(data.student.id, 'done')
-      saveProjectsToStorage()
+      saveProjectsToStorageNow()
 
       // Clear operator progress text — photos are done!
       setOpProgressText('')
@@ -218,8 +218,8 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     // 1. Update student status in store
     updateStudentStatus(nextPending.id, newStatus)
 
-    // 2. Persist
-    saveProjectsToStorage()
+    // 2. Persist immediately
+    saveProjectsToStorageNow()
 
     // 3. Emit socket events
     const updatedProject = {
@@ -244,7 +244,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     myChannel,
     updateStudentStatus,
     updateCurrentProject,
-    saveProjectsToStorage,
+    saveProjectsToStorageNow,
   ])
 
   // ── Render helpers ──────────────────────────────────────────────────────
