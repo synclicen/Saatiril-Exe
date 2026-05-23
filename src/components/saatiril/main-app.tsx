@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -101,6 +101,7 @@ export function MainApp() {
   }, [myRole, currentTab])
 
   // ── Detect LAN IP via WebRTC ───────────────────────────────────────────────
+  const lanIPFoundRef = useRef(false)
   useEffect(() => {
     try {
       const pc = new RTCPeerConnection({ iceServers: [] })
@@ -111,6 +112,7 @@ export function MainApp() {
         const parts = e.candidate.candidate.split(' ')
         const ip = parts[4]
         if (ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+          lanIPFoundRef.current = true
           setLanIP(ip)
           pc.close()
         }
@@ -118,7 +120,7 @@ export function MainApp() {
       // Fallback: also try to detect from hostname
       setTimeout(() => {
         pc.close()
-        if (!lanIP && typeof window !== 'undefined') {
+        if (!lanIPFoundRef.current && typeof window !== 'undefined') {
           // Try using the hostname from current URL
           const hostname = window.location.hostname
           if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
@@ -227,15 +229,25 @@ export function MainApp() {
       const curProj = currentProjectRef.current
 
       if (role !== 'admin' && data.project) {
-        // For MC/Operator: replace entire project with server data
-        updateCurrentProject(data.project)
-      } else if (role === 'admin' && data.project) {
-        // For admin: merge database and photoHistory from other clients
+        // For MC/Operator: merge incoming database with local (prevents data regression)
         if (curProj && data.project.id === curProj.id) {
+          const mergedDb = mergeDatabases(curProj.database, data.project.database)
           updateCurrentProject({
             ...curProj,
-            database: data.project.database,
-            photoHistory: data.project.photoHistory ?? curProj.photoHistory,
+            database: mergedDb,
+            photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+          })
+        } else {
+          updateCurrentProject(data.project)
+        }
+      } else if (role === 'admin' && data.project) {
+        // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
+        if (curProj && data.project.id === curProj.id) {
+          const mergedDb = mergeDatabases(curProj.database, data.project.database)
+          updateCurrentProject({
+            ...curProj,
+            database: mergedDb,
+            photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
           })
         }
       }
@@ -245,7 +257,7 @@ export function MainApp() {
       const role = myRoleRef.current
       const curProj = currentProjectRef.current
       if (role === 'admin' && curProj) {
-        emitLocal('SYNC_DB', { project: curProj })
+        emitLocal('SYNC_DB', { project: stripFrameForSync(curProj) })
       }
     }
 

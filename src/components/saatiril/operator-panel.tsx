@@ -35,6 +35,8 @@ import {
   type Student,
   type StudentStatus,
   type PhotoHistoryItem,
+  mergeDatabases,
+  stripFrameForSync,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
@@ -177,6 +179,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [flashVisible, setFlashVisible] = useState(false)
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
+  const isCapturingRef = useRef(false) // Guard against rapid capture clicks
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -354,7 +357,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     const activeStudent = currentProject.database.find(
       (s) => s.assignedChannel === myChannel && isActiveStatus(s.status),
     )
-    if (activeStudent) setOpCurrentTarget(activeStudent)
+    if (activeStudent) {
+      setOpCurrentTarget(activeStudent)
+    } else if (opCurrentTarget && !isActiveStatus(opCurrentTarget.status)) {
+      // Clear stale target if the student is no longer active (e.g., marked done by another client)
+      setOpCurrentTarget(null)
+    }
   }, [currentProject, myChannel, setOpCurrentTarget])
 
   // ── Socket: MC_CALL ─────────────────────────────────────────────────────
@@ -372,7 +380,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     const handleSyncDb = (data: SyncDbData) => {
       const proj = currentProjectRef.current
       if (!proj) return
-      updateCurrentProject({ ...proj, database: data.project.database, photoHistory: data.project.photoHistory ?? proj.photoHistory })
+      const mergedDb = mergeDatabases(proj.database, data.project.database)
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory })
       const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
@@ -401,11 +410,20 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       if (photoCount === 1) {
         // First photo just added (was 0, now 1)
+        isCapturingRef.current = false
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
       } else if (photoCount >= 2) {
         // Second photo just added (was 1, now 2) — finalize
+        // Guard: if target was cleared (e.g., by SYNC_DB), abort safely
+        if (!currentTarget) {
+          console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
+          setSending(false)
+          isCapturingRef.current = false
+          resetOpState()
+          return
+        }
         setSending(true)
-        const student = currentTarget!
+        const student = currentTarget
         const allPhotos = [...currentPhotos]
         const historyItem: PhotoHistoryItem = {
           student: { ...student },
@@ -468,9 +486,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             }
             const updatedProject = { ...store.currentProject, photoHistory: newHistory }
             store.updateCurrentProject(updatedProject)
-            emitLocal('SYNC_DB', { project: updatedProject })
+            emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
           }
           setSending(false)
+          isCapturingRef.current = false
           setTimeout(() => { resetOpState() }, 300)
         }, 100)
       }
@@ -482,6 +501,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const handleCapture = useCallback(() => {
     if (!opCurrentTarget) return
     if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
+    if (isCapturingRef.current) return // Prevent rapid double-click
+    isCapturingRef.current = true
 
     const canvas = canvasRef.current
     const video = videoRef.current

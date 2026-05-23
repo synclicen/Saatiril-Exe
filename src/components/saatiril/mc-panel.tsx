@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
@@ -122,10 +122,11 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       // Only update if this is the same project we're working on
       const curProj = currentProjectRef.current
       if (curProj && proj.id === curProj.id) {
+        const mergedDb = mergeDatabases(curProj.database, proj.database)
         updateCurrentProject({
           ...curProj,
-          database: proj.database,
-          photoHistory: proj.photoHistory ?? curProj.photoHistory,
+          database: mergedDb,
+          photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
         })
       }
     }
@@ -183,7 +184,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
     onLocal('PHOTOS_SAVED', handlePhotosSaved)
     return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
-  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorage])
+  }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
   // ── Socket: OP_PROGRESS — operator is taking photos ────────────────────
   useEffect(() => {
@@ -221,10 +222,13 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     // 2. Persist immediately
     saveProjectsToStorageNow()
 
-    // 3. Emit socket events
+    // 3. Read LATEST store state (not stale closure) to construct sync data
+    const latestProject = useSaatirilStore.getState().currentProject
+    if (!latestProject) return
+
     const updatedProject = {
-      ...currentProject,
-      database: currentProject.database.map((s) =>
+      ...latestProject,
+      database: latestProject.database.map((s) =>
         s.id === nextPending.id ? { ...s, status: newStatus } : s
       ),
     }
@@ -233,7 +237,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     // Clear any stale progress text
     setOpProgressText('')
 
-    emitLocal('SYNC_DB', { project: updatedProject })
+    emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
     emitLocal('MC_CALL', {
       student: { ...nextPending, status: newStatus },
       channel: myChannel,

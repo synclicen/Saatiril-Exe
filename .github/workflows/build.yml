@@ -111,8 +111,8 @@ jobs:
           2. Install aplikasi
           3. Jalankan SAATIRIL dari Desktop/Start Menu
           4. Untuk MC/Operator di perangkat lain, buka browser:
-             - MC: http://IP-KOMPUTER:3003/?role=mc&projectId=XXX
-             - Operator: http://IP-KOMPUTER:3003/?role=operator&projectId=XXX
+             - MC: http://IP-KOMPUTER:3000/?role=mc&channel=1&socketPort=3003
+             - Operator: http://IP-KOMPUTER:3000/?role=operator&channel=1&socketPort=3003
 
           ## Fitur
           - 3 Role: Admin, MC, Operator Kamera

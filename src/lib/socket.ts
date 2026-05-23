@@ -133,6 +133,13 @@ function flushEventQueue() {
 export function connectSocket(): Socket {
   if (socket?.connected) return socket
 
+  // Clean up existing disconnected socket before creating a new one
+  if (socket) {
+    socket.removeAllListeners()
+    socket.disconnect()
+    socket = null
+  }
+
   const socketUrl = getSocketUrl()
   const isElectron = !!(window as any).saatirilAPI?.isElectron
   const isLanDevice = !isElectron && !!(new URLSearchParams(window.location.search).get('socketPort'))

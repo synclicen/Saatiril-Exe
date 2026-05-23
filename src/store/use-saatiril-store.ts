@@ -44,6 +44,62 @@ export type AppTab = 'admin' | 'mc' | 'operator'
 // Photos are still saved to disk by the Operator's SYNC_DB handler.
 const MAX_PHOTO_HISTORY_IN_MEMORY = 200
 
+// ─── Student status priority for merge ───────────────────────────────────────
+// When merging databases from different clients, we keep the "most advanced" status.
+// pending (0) < active_N (1) < done (2)
+function getStatusPriority(status: StudentStatus): number {
+  if (status === 'pending') return 0
+  if (status === 'done') return 2
+  // active_N statuses get priority 1
+  return 1
+}
+
+/**
+ * Merge two student databases, keeping the "most advanced" status for each student.
+ * This prevents data regression when SYNC_DB payloads from different channels
+ * overwrite each other's progress in dual mode.
+ */
+export function mergeDatabases(
+  localDb: Student[],
+  incomingDb: Student[],
+): Student[] {
+  const studentMap = new Map<string, Student>()
+
+  // Add all local students
+  for (const s of localDb) {
+    studentMap.set(s.id, s)
+  }
+
+  // Merge incoming — only update if incoming status is more advanced
+  for (const s of incomingDb) {
+    const existing = studentMap.get(s.id)
+    if (!existing) {
+      studentMap.set(s.id, s)
+    } else {
+      const existingPriority = getStatusPriority(existing.status)
+      const incomingPriority = getStatusPriority(s.status)
+      if (incomingPriority > existingPriority) {
+        studentMap.set(s.id, s)
+      }
+    }
+  }
+
+  return Array.from(studentMap.values())
+}
+
+/**
+ * Strip frame base64 data from a project for SYNC_DB transmission.
+ * Frame data can be 500KB-2MB and doesn't need to be re-sent every time.
+ * Recipients who already have the frame don't need it again.
+ */
+export function stripFrameForSync(project: Project): Project {
+  if (!project.config.frame) return project
+  return {
+    ...project,
+    config: { ...project.config, frame: '__FRAME_SAVED__' },
+  }
+}
+
 // ─── Debounced save ───────────────────────────────────────────────────────
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 const SAVE_DEBOUNCE_MS = 500 // Debounce saves to avoid thrashing localStorage
@@ -110,7 +166,11 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   addProject: (project) => set((s) => ({ projects: [...s.projects, project] })),
   deleteProject: (id) => set((s) => {
     const newProjects = s.projects.filter(p => p.id !== id)
-    return { projects: newProjects }
+    const shouldClearCurrent = s.currentProject?.id === id
+    return {
+      projects: newProjects,
+      ...(shouldClearCurrent ? { currentProject: null } : {}),
+    }
   }),
   setCurrentProject: (project) => set({ currentProject: project }),
   updateCurrentProject: (project) => set((s) => {
@@ -165,9 +225,13 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     saveTimeout = setTimeout(() => {
       try {
         const { projects } = get()
-        // Never save photoHistory to localStorage (too large, and it's transient data)
-        // Photo data is saved to disk by Operator's file save logic
-        const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
+        // Save lightweight metadata (no base64 photos) but keep photo history structure
+        // so admin gallery shows entries after reload (just without thumbnails)
+        const safeProjects = projects.map(p => ({
+          ...p,
+          photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
+          config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
+        }))
         localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
         console.log('[SAATIRIL] Projects saved to localStorage (debounced)')
       } catch (e) {
@@ -181,7 +245,12 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
     try {
       const { projects } = get()
-      const safeProjects = projects.map(p => ({ ...p, photoHistory: [] }))
+      // Save lightweight metadata (no base64 photos) but keep photo history structure
+      const safeProjects = projects.map(p => ({
+        ...p,
+        photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),
+        config: { ...p.config, frame: p.config.frame ? '__FRAME_SAVED__' : null },
+      }))
       localStorage.setItem('saatiril_projects', JSON.stringify(safeProjects))
       console.log('[SAATIRIL] Projects saved to localStorage (immediate)')
     } catch (e) {

@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { useSaatirilStore, type Student } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, stripFrameForSync } from '@/store/use-saatiril-store'
 import { emitLocal } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -310,8 +310,8 @@ export default function ProjectSetup() {
     // IMMEDIATE save before navigation to prevent data loss on first launch
     saveProjectsToStorageNow()
 
-    // Sync database over LAN — use correct data shape { project: Project }
-    emitLocal('SYNC_DB', { project })
+    // Sync database over LAN — strip frame data to save bandwidth
+    emitLocal('SYNC_DB', { project: stripFrameForSync(project) })
 
     toast({
       title: 'Proyek Dibuat!',
