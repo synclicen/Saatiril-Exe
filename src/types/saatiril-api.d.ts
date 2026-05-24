@@ -3,6 +3,7 @@
 interface LanInfo {
   httpPort: number
   socketPort: number
+  useHttps: boolean
   ips: Array<{ name: string; address: string }>
 }
 

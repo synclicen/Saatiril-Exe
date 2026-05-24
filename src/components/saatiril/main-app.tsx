@@ -136,12 +136,14 @@ export function MainApp() {
 
   // ── Detect HTTP port for LAN access ───────────────────────────────────────
   const [httpPort, setHttpPort] = useState(3000)
+  const [useHttps, setUseHttps] = useState(false)
 
   useEffect(() => {
     const api = window.saatirilAPI
     if (api?.isElectron && api.getLanInfo) {
-      api.getLanInfo().then((info: { httpPort: number }) => {
+      api.getLanInfo().then((info: { httpPort: number; useHttps: boolean }) => {
         setHttpPort(info.httpPort)
+        setUseHttps(info.useHttps)
       }).catch(() => {})
     }
   }, [])
@@ -149,10 +151,11 @@ export function MainApp() {
   // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
-    navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
+    const scheme = useHttps ? 'https' : 'http'
+    navigator.clipboard.writeText(`${scheme}://${lanIP}:${httpPort}`)
     setCopiedIP(true)
     setTimeout(() => setCopiedIP(false), 2000)
-  }, [lanIP, httpPort])
+  }, [lanIP, httpPort, useHttps])
 
   // ── URL parameter handling (run once on mount) ────────────────────────────
   useEffect(() => {
@@ -441,8 +444,13 @@ export function MainApp() {
                 title="Klik untuk salin alamat LAN"
               >
                 <Wifi className="size-3" style={{ color: THEME.gold }} />
+                {useHttps && (
+                  <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#22c55e33', color: '#4ade80' }}>
+                    HTTPS
+                  </span>
+                )}
                 <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
-                  {lanIP}:{httpPort}
+                  {useHttps ? 'https' : 'http'}://{lanIP}:{httpPort}
                 </span>
                 {copiedIP ? (
                   <Check className="size-3" style={{ color: '#22c55e' }} />

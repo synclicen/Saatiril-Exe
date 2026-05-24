@@ -8,7 +8,7 @@
  * - Socket.io server runs IN-PROCESS on port 3003
  * - Socket.io port is auto-detected and passed to renderer
  *
- * MC/Operator on other devices access: http://<LAN_IP>:3000/?role=mc&channel=1&socketPort=3003
+ * MC/Operator on other devices access: https://<LAN_IP>:3000/?role=mc&channel=1&socketPort=3003
  * Admin uses Electron window with saatiril:// protocol
  */
 
@@ -17,8 +17,10 @@ const path = require('path')
 const os = require('os')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { createServer } = require('http')
+const { createServer: createHttpServer } = require('http')
+const { createServer: createHttpsServer } = require('https')
 const { Server } = require('socket.io')
+const selfsigned = require('selfsigned')
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const isDev = !app.isPackaged
@@ -32,6 +34,7 @@ let httpServer = null
 let socketPort = 3003
 let httpPort = 3000
 let staticFileServer = null
+let httpsCert = null  // { cert: Buffer, key: Buffer } — cached for the session
 
 // ─── Utility: Get local network IPs ─────────────────────────────────────────
 function getLocalIPs() {
@@ -45,6 +48,67 @@ function getLocalIPs() {
     }
   }
   return ips
+}
+
+// ─── Generate self-signed HTTPS certificate ──────────────────────────────────
+// Required for camera access (getUserMedia) from LAN devices.
+// Browsers block camera on plain HTTP; HTTPS (even self-signed) enables it.
+// Certificate is cached to disk so the operator only accepts the warning once.
+function generateOrLoadCert() {
+  const userDataPath = app.getPath('userData')
+  const certFile = path.join(userDataPath, 'saatiril-cert.pem')
+  const keyFile = path.join(userDataPath, 'saatiril-key.pem')
+
+  // Try to load existing cert from disk
+  try {
+    if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
+      const cert = fs.readFileSync(certFile, 'utf8')
+      const key = fs.readFileSync(keyFile, 'utf8')
+      // Verify the cert hasn't expired (parse the Not After date)
+      try {
+        const certDetails = new (require('crypto')).X509Certificate(cert)
+        if (!certDetails.validToDate || new Date(certDetails.validToDate) > new Date()) {
+          console.log('[SAATIRIL] Loaded existing HTTPS certificate from disk')
+          return { cert, key }
+        }
+        console.log('[SAATIRIL] Existing certificate expired — generating new one')
+      } catch {
+        // If X509Certificate parsing fails, just use it anyway
+        console.log('[SAATIRIL] Could not parse cert date — using existing cert')
+        return { cert, key }
+      }
+    }
+  } catch (e) {
+    console.warn('[SAATIRIL] Could not load existing cert:', e.message)
+  }
+
+  // Generate new self-signed certificate
+  console.log('[SAATIRIL] Generating new self-signed HTTPS certificate...')
+  try {
+    const attrs = [
+      { name: 'commonName', value: 'SAATIRIL' },
+      { name: 'organizationName', value: 'SAATIRIL - Graduation Photo System' },
+    ]
+    const pems = selfsigned.generate(attrs, {
+      days: 365,
+      keySize: 2048,
+      algorithm: 'sha256',
+    })
+
+    // Save to disk for reuse across restarts
+    try {
+      fs.writeFileSync(certFile, pems.cert, 'utf8')
+      fs.writeFileSync(keyFile, pems.private, 'utf8')
+      console.log('[SAATIRIL] Certificate saved to disk for reuse')
+    } catch (e) {
+      console.warn('[SAATIRIL] Could not save cert to disk:', e.message)
+    }
+
+    return { cert: pems.cert, key: pems.private }
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to generate self-signed cert:', e.message)
+    return null
+  }
 }
 
 // ─── Find available port ────────────────────────────────────────────────────
@@ -108,56 +172,92 @@ const MIME_TYPES = {
   '.xml':  'application/xml',
 }
 
-// ─── Start HTTP static file server for LAN access ──────────────────────────
-// Serves Next.js static export so MC/Operator devices on the LAN
-// can access the web interface at http://<LAN_IP>:3000/
-async function startStaticFileServer() {
-  httpPort = await findAvailablePort(3000)
-  console.log(`[SAATIRIL] Using HTTP static file port: ${httpPort}`)
+// ─── Request handler for static file serving ────────────────────────────────
+// Shared between HTTP and HTTPS servers — serves Next.js static export
+function staticFileHandler(req, res) {
+  // Parse URL — strip query params
+  const protocol = req.socket.encrypted ? 'https' : 'http'
+  const url = new URL(req.url, `${protocol}://${req.headers.host}`)
+  let filePath = url.pathname
 
-  staticFileServer = createServer((req, res) => {
-    // Parse URL — strip query params
-    const url = new URL(req.url, `http://${req.headers.host}`)
-    let filePath = url.pathname
+  // Normalize: remove leading slash, handle directory -> index.html
+  if (filePath.startsWith('/')) filePath = filePath.slice(1)
+  if (filePath === '' || filePath.endsWith('/')) {
+    filePath += 'index.html'
+  }
 
-    // Normalize: remove leading slash, handle directory -> index.html
-    if (filePath.startsWith('/')) filePath = filePath.slice(1)
-    if (filePath === '' || filePath.endsWith('/')) {
-      filePath += 'index.html'
-    }
+  const fullPath = path.normalize(path.join(STATIC_DIR, filePath))
 
-    const fullPath = path.normalize(path.join(STATIC_DIR, filePath))
+  // Security: prevent directory traversal
+  if (!fullPath.startsWith(path.normalize(STATIC_DIR))) {
+    res.writeHead(403)
+    res.end('Forbidden')
+    return
+  }
 
-    // Security: prevent directory traversal
-    if (!fullPath.startsWith(path.normalize(STATIC_DIR))) {
-      res.writeHead(403)
-      res.end('Forbidden')
+  fs.readFile(fullPath, (err, data) => {
+    if (err) {
+      // If file not found, serve index.html (for client-side routing)
+      const indexFile = path.join(STATIC_DIR, 'index.html')
+      fs.readFile(indexFile, (indexErr, indexData) => {
+        if (indexErr) {
+          res.writeHead(404)
+          res.end('Not Found')
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end(indexData)
+      })
       return
     }
 
-    fs.readFile(fullPath, (err, data) => {
-      if (err) {
-        // If file not found, serve index.html (for client-side routing)
-        const indexFile = path.join(STATIC_DIR, 'index.html')
-        fs.readFile(indexFile, (indexErr, indexData) => {
-          if (indexErr) {
-            res.writeHead(404)
-            res.end('Not Found')
-            return
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end(indexData)
-        })
-        return
-      }
-
-      // Determine content type
-      const ext = path.extname(fullPath).toLowerCase()
-      const contentType = MIME_TYPES[ext] || 'application/octet-stream'
-      res.writeHead(200, { 'Content-Type': contentType })
-      res.end(data)
-    })
+    // Determine content type
+    const ext = path.extname(fullPath).toLowerCase()
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+    res.writeHead(200, { 'Content-Type': contentType })
+    res.end(data)
   })
+}
+
+// ─── Start HTTPS static file server for LAN access ──────────────────────────
+// Serves Next.js static export over HTTPS so MC/Operator devices on the LAN
+// can access the web interface AND use their local cameras.
+// Browsers require HTTPS (secure context) for getUserMedia() camera access.
+// Self-signed cert is generated once and cached to disk.
+async function startStaticFileServer() {
+  httpPort = await findAvailablePort(3000)
+  console.log(`[SAATIRIL] Using HTTPS static file port: ${httpPort}`)
+
+  // Try HTTPS first (required for camera access on LAN devices)
+  if (httpsCert) {
+    try {
+      staticFileServer = createHttpsServer(
+        { key: httpsCert.key, cert: httpsCert.cert },
+        staticFileHandler,
+      )
+
+      await new Promise((resolve, reject) => {
+        staticFileServer.listen(httpPort, '0.0.0.0', () => {
+          const ips = getLocalIPs()
+          console.log(`[SAATIRIL] ✅ HTTPS static file server running on port ${httpPort}`)
+          if (ips.length > 0) {
+            console.log(`[SAATIRIL] MC/Operator can access at: https://${ips[0].address}:${httpPort}`)
+            console.log(`[SAATIRIL] ⚠️  Operator will see a certificate warning — click Advanced → Proceed to enable camera`)
+          }
+          resolve()
+        })
+        staticFileServer.on('error', reject)
+      })
+      return
+    } catch (err) {
+      console.warn('[SAATIRIL] HTTPS server failed, falling back to HTTP:', err.message)
+      staticFileServer = null
+    }
+  }
+
+  // Fallback to HTTP (camera won't work on LAN devices)
+  console.warn('[SAATIRIL] ⚠️  Using HTTP — camera access will NOT work on LAN devices!')
+  staticFileServer = createHttpServer(staticFileHandler)
 
   return new Promise((resolve, reject) => {
     staticFileServer.listen(httpPort, '0.0.0.0', () => {
@@ -172,7 +272,7 @@ async function startStaticFileServer() {
   })
 }
 
-// ─── Start Socket.io server (in-process, no child process) ─────────────────
+// ─── Start Socket.io server (in-process, with HTTPS support) ──────────────
 let totalMessagesRelayed = 0
 let totalConnections = 0
 
@@ -180,7 +280,20 @@ async function startSocketServer() {
   socketPort = await findAvailablePort(3003)
   console.log(`[SAATIRIL] Using Socket.io port: ${socketPort}`)
 
-  httpServer = createServer()
+  // Use HTTPS for Socket.io server too (prevents mixed content blocking
+  // when the page is served over HTTPS and tries to connect via WS)
+  if (httpsCert) {
+    try {
+      httpServer = createHttpsServer({ key: httpsCert.key, cert: httpsCert.cert })
+      console.log('[SAATIRIL] Socket.io server using HTTPS (WSS)')
+    } catch (err) {
+      console.warn('[SAATIRIL] HTTPS for Socket.io failed, using HTTP:', err.message)
+      httpServer = createHttpServer()
+    }
+  } else {
+    httpServer = createHttpServer()
+  }
+
   io = new Server(httpServer, {
     path: '/',
     cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -286,11 +399,12 @@ function createMainWindow(isFreshInstall = false) {
           click: () => {
             const ips = getLocalIPs()
             const ipList = ips.map(ip => `${ip.name}: ${ip.address}`).join('\n')
+            const scheme = httpsCert ? 'https' : 'http'
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: 'Tentang SAATIRIL',
               message: 'SAATIRIL — Sistem Auto Track Input Raw into Live',
-              detail: `Versi: ${app.getVersion()}\n\nHTTP: Port ${httpPort}\nSocket.io: Port ${socketPort}\n\nAkses perangkat lain di LAN:\n${ipList ? ips.map(ip => `  http://${ip.address}:${httpPort}`).join('\n') : 'Tidak ada jaringan LAN terdeteksi'}`,
+              detail: `Versi: ${app.getVersion()}\n\nHTTP: Port ${httpPort} (${scheme.toUpperCase()})\nSocket.io: Port ${socketPort}\n\nAkses perangkat lain di LAN:\n${ipList ? ips.map(ip => `  ${scheme}://${ip.address}:${httpPort}`).join('\n') : 'Tidak ada jaringan LAN terdeteksi'}${httpsCert ? '\n\n✅ HTTPS aktif — kamera bisa diakses dari perangkat LAN' : '\n\n⚠️ HTTPS tidak aktif — kamera TIDAK bisa diakses dari perangkat LAN'}`,
             })
           },
         },
@@ -330,12 +444,13 @@ function createMainWindow(isFreshInstall = false) {
           label: 'Lihat IP Address LAN',
           click: () => {
             const ips = getLocalIPs()
+            const scheme = httpsCert ? 'https' : 'http'
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: 'IP Address LAN',
               message: 'Perangkat lain dapat mengakses SAATIRIL di:',
               detail: ips.length > 0
-                ? ips.map(ip => `  ${ip.name}: http://${ip.address}:${httpPort}`).join('\n')
+                ? ips.map(ip => `  ${ip.name}: ${scheme}://${ip.address}:${httpPort}`).join('\n')
                 : 'Tidak ada jaringan LAN terdeteksi',
             })
           },
@@ -373,6 +488,7 @@ ipcMain.handle('get-lan-info', () => {
   return {
     httpPort,
     socketPort,
+    useHttps: !!httpsCert,
     ips: ips.map(ip => ({ name: ip.name, address: ip.address })),
   }
 })
@@ -449,11 +565,20 @@ app.on('ready', async () => {
     return net.fetch(fileUrl)
   })
 
-  console.log('[SAATIRIL] Starting HTTP static file server...')
+  // ── Generate HTTPS certificate ────────────────────────────────────────────
+  // Must be done BEFORE starting servers so both static + Socket.io use the same cert
+  httpsCert = generateOrLoadCert()
+  if (httpsCert) {
+    console.log('[SAATIRIL] ✅ HTTPS certificate ready — camera access will work on LAN devices')
+  } else {
+    console.warn('[SAATIRIL] ⚠️  No HTTPS certificate — camera will NOT work on LAN devices')
+  }
+
+  console.log('[SAATIRIL] Starting HTTPS static file server...')
   try {
     await startStaticFileServer()
   } catch (err) {
-    console.error('[SAATIRIL] Failed to start HTTP server:', err)
+    console.error('[SAATIRIL] Failed to start HTTPS server:', err)
   }
 
   console.log('[SAATIRIL] Starting Socket.io server...')
@@ -497,8 +622,9 @@ app.on('ready', async () => {
 
   mainWindow.webContents.on('did-finish-load', () => {
     const ips = getLocalIPs()
+    const scheme = httpsCert ? 'https' : 'http'
     if (ips.length > 0) {
-      console.log(`[SAATIRIL] Perangkat lain bisa akses: http://${ips[0].address}:${httpPort}`)
+      console.log(`[SAATIRIL] Perangkat lain bisa akses: ${scheme}://${ips[0].address}:${httpPort}`)
       console.log(`[SAATIRIL] Socket.io berjalan di: ${ips[0].address}:${socketPort}`)
     }
     // NOTE: No reload logic here! Fresh install clearing is done

@@ -220,13 +220,17 @@ export default function AdminDashboard() {
           const ips = lanInfo.ips
           // Use the first non-internal LAN IP
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          url = `http://${lanIP}:${lanInfo.httpPort}/?role=${role}&channel=${channel}&socketPort=${lanInfo.socketPort}`
+          // Use HTTPS if available (required for camera access on LAN devices)
+          const scheme = lanInfo.useHttps ? 'https' : 'http'
+          url = `${scheme}://${lanIP}:${lanInfo.httpPort}/?role=${role}&channel=${channel}&socketPort=${lanInfo.socketPort}`
         } catch {
           // Fallback: try to use current hostname
           const hostname = window.location.hostname
           const params = new URLSearchParams(window.location.search)
           const socketPort = params.get('socketPort') || '3003'
-          url = `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+          // Infer scheme from current page
+          const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
+          url = `${scheme}://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
         }
       } else {
         // Web/sandbox: just role & channel (Caddy handles routing)
@@ -388,15 +392,29 @@ export default function AdminDashboard() {
   }
 
   // ── Render: LAN Access Distribution ──────────────────────────────
-  const renderLanAccess = () => (
+  const renderLanAccess = () => {
+    const isElectron = !!(window as any).saatirilAPI?.isElectron
+    const isSecure = typeof window !== 'undefined' && window.isSecureContext
+
+    return (
     <Card className={`${PANEL} ${BORDER} shadow-lg`}>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
           <Wifi className="size-4" style={{ color: GOLD }} />
           LAN Access Distribution
+          {isSecure && (
+            <Badge className="text-[8px] px-1.5 py-0.5 ml-1" style={{ backgroundColor: '#22c55e22', color: '#4ade80', border: '1px solid #22c55e44' }}>
+              🔒 HTTPS
+            </Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {!isSecure && isElectron && (
+          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#ef444415', border: '1px solid #ef444433', color: '#fca5a5' }}>
+            ⚠️ Kamera operator tidak akan berfungsi tanpa HTTPS. Restart aplikasi untuk mengaktifkan HTTPS.
+          </div>
+        )}
         {mode === 'single' ? (
           <div className="flex flex-col gap-2">
             <Button
@@ -474,6 +492,7 @@ export default function AdminDashboard() {
       </CardContent>
     </Card>
   )
+  }
 
   // ── Render: Photo History Item ───────────────────────────────────
   const renderPhotoItem = (item: PhotoHistoryItem, index: number) => {

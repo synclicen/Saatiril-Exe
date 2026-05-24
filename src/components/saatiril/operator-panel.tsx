@@ -130,7 +130,9 @@ function fitAspectRatio(
 // ─── Capture state machine ──────────────────────────────────────────────────
 type CapturePhase = 'standby' | 'ready-1' | 'ready-2' | 'sending'
 
-// ─── Video device info ──────────────────────────────────────────────────────
+// ─── Camera error types ─────────────────────────────────────────────────────
+type CameraErrorType = 'none' | 'insecure-context' | 'permission-denied' | 'no-devices' | 'unknown'
+
 interface VideoDeviceInfo {
   deviceId: string
   label: string
@@ -176,6 +178,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [cameraAvailable, setCameraAvailable] = useState(false)
+  const [cameraError, setCameraError] = useState<CameraErrorType>(() => {
+    // Detect insecure context at initialization time (not in an effect).
+    // Browsers require HTTPS (secure context) for getUserMedia() camera access.
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      return 'insecure-context'
+    }
+    return 'none'
+  })
   const [flashVisible, setFlashVisible] = useState(false)
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
@@ -269,6 +279,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [currentlyActive, nextPending])
 
+  // ── Camera: secure context check is done in state initialization above ─────
+  // If insecure context is detected, cameraError will be 'insecure-context'
+  // and the camera overlay will show instructions for fixing it.
+
   // ── Camera: enumerate devices ────────────────────────────────────────────
   const enumerateVideoDevices = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices) return
@@ -280,10 +294,15 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           deviceId: d.deviceId,
           label: d.label || `Kamera ${d.deviceId.slice(0, 6)}`,
         }))
+      console.log('[SAATIRIL OP] Enumerated video devices:', videoInputs.length)
       setVideoDevices(videoInputs)
       if (videoInputs.length > 0 && !selectedDeviceRef.current) {
         setSelectedDeviceId(videoInputs[0].deviceId)
         selectedDeviceRef.current = videoInputs[0].deviceId
+      }
+      // Only set no-devices error if there's no existing error (avoid overwriting more specific errors)
+      if (videoInputs.length === 0) {
+        setCameraError((prev) => prev === 'none' ? 'no-devices' : prev)
       }
     } catch (err) {
       console.error('[SAATIRIL OP] Failed to enumerate devices:', err)
@@ -293,10 +312,19 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Camera: start stream ─────────────────────────────────────────────────
   const startCamera = useCallback(
     async (deviceId?: string) => {
-      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+      // Check for secure context first
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
+        setCameraError('insecure-context')
         setCameraAvailable(false)
         return
       }
+
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+        setCameraError('insecure-context')
+        setCameraAvailable(false)
+        return
+      }
+
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
@@ -311,10 +339,27 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         streamRef.current = stream
         setCameraAvailable(true)
+        setCameraError('none')
         if (videoRef.current) videoRef.current.srcObject = stream
         await enumerateVideoDevices()
-      } catch (err) {
-        console.error('[SAATIRIL OP] Camera access failed:', err)
+        console.log('[SAATIRIL OP] ✅ Camera started successfully')
+      } catch (err: any) {
+        console.error('[SAATIRIL OP] Camera access failed:', err?.name, err?.message)
+
+        // Classify the error for user-friendly messaging
+        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+          setCameraError('permission-denied')
+        } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+          setCameraError('no-devices')
+        } else if (
+          err?.message?.includes('secure context') ||
+          err?.message?.includes('Only secure origins') ||
+          err?.name === 'NotSupportedError'
+        ) {
+          setCameraError('insecure-context')
+        } else {
+          setCameraError('unknown')
+        }
         setCameraAvailable(false)
       }
     },
@@ -655,16 +700,82 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             }}
           />
 
-          {/* NO CAMERA SIGNAL overlay */}
+          {/* NO CAMERA SIGNAL / ERROR overlay */}
           {!cameraAvailable && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80" style={{ zIndex: 8 }}>
-              <VideoOff className="size-12" style={{ color: THEME.border }} />
-              <p className="text-sm font-semibold tracking-wider" style={{ color: THEME.muted }}>
-                NO CAMERA SIGNAL
-              </p>
-              <p className="text-xs" style={{ color: THEME.border }}>
-                Pastikan kamera terhubung dan izin diberikan
-              </p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 px-4" style={{ zIndex: 8 }}>
+              {cameraError === 'insecure-context' ? (
+                <>
+                  <VideoOff className="size-12" style={{ color: '#ef4444' }} />
+                  <p className="text-sm font-bold tracking-wider text-red-400">
+                    KAMERA DIBLOKIR
+                  </p>
+                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
+                    Browser memblokir akses kamera karena koneksi tidak aman (HTTP).
+                  </p>
+                  <div className="mt-2 rounded-lg p-3 text-center max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.border}` }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.gold }}>
+                      Cara Memperbaiki
+                    </p>
+                    <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.muted }}>
+                      <li>1. Minta Admin menyalin link HTTPS dari panel LAN</li>
+                      <li>2. Buka link HTTPS di browser (mis: https://192.168.x.x:3000)</li>
+                      <li>3. Klik &quot;Advanced&quot; → &quot;Proceed&quot; pada peringatan sertifikat</li>
+                      <li>4. Kamera akan otomatis aktif</li>
+                    </ol>
+                  </div>
+                </>
+              ) : cameraError === 'permission-denied' ? (
+                <>
+                  <VideoOff className="size-12" style={{ color: '#f59e0b' }} />
+                  <p className="text-sm font-bold tracking-wider text-amber-400">
+                    IZIN KAMERA DITOLAK
+                  </p>
+                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
+                    Klik ikon kamera/lock di address bar browser, lalu izinkan akses kamera, lalu muat ulang halaman.
+                  </p>
+                  <Button
+                    onClick={() => startCamera()}
+                    className="mt-2 text-xs h-8 px-4"
+                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+                  >
+                    Coba Lagi
+                  </Button>
+                </>
+              ) : cameraError === 'no-devices' ? (
+                <>
+                  <VideoOff className="size-12" style={{ color: THEME.border }} />
+                  <p className="text-sm font-bold tracking-wider" style={{ color: THEME.muted }}>
+                    TIDAK ADA KAMERA
+                  </p>
+                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.border }}>
+                    Tidak ditemukan kamera. Pastikan kamera terhubung ke perangkat ini.
+                  </p>
+                  <Button
+                    onClick={() => startCamera()}
+                    className="mt-2 text-xs h-8 px-4"
+                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+                  >
+                    Coba Lagi
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <VideoOff className="size-12" style={{ color: THEME.border }} />
+                  <p className="text-sm font-semibold tracking-wider" style={{ color: THEME.muted }}>
+                    NO CAMERA SIGNAL
+                  </p>
+                  <p className="text-xs" style={{ color: THEME.border }}>
+                    Pastikan kamera terhubung dan izin diberikan
+                  </p>
+                  <Button
+                    onClick={() => startCamera()}
+                    className="mt-2 text-xs h-8 px-4"
+                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+                  >
+                    Coba Lagi
+                  </Button>
+                </>
+              )}
             </div>
           )}
 

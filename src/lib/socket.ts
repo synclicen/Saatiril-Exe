@@ -46,7 +46,8 @@ export function getConnectionHealth(): ConnectionHealth {
  *
  * 2. LAN device (MC/Operator on their own device):
  *    - Has socketPort in URL params (added by copyLink)
- *    - Connect directly to http://<current-hostname>:<socketPort>
+ *    - Connect directly to http(s)://<current-hostname>:<socketPort>
+ *    - Uses HTTPS if the page is served over HTTPS (self-signed cert from Electron)
  *
  * 3. Web/sandbox mode (development):
  *    - Use XTransformPort=3003 for Caddy gateway routing
@@ -69,7 +70,9 @@ function getSocketUrl(): string {
   // This happens when MC/Operator opens a shared link on their own device
   if (socketPortParam) {
     const hostname = window.location.hostname
-    return `http://${hostname}:${socketPortParam}`
+    // Use the same scheme as the page (HTTPS if self-signed cert from Electron)
+    const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
+    return `${scheme}://${hostname}:${socketPortParam}`
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort
