@@ -32,6 +32,9 @@ import {
   List,
   X,
   SwitchCamera,
+  Brain,
+  Sparkles,
+  Zap,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -40,9 +43,12 @@ import {
   type PhotoHistoryItem,
   mergeDatabases,
   stripFrameForSync,
+  preserveFrameOnSync,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -173,6 +179,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
   const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
   const isCapturingRef = useRef(false)
+
+  // ── AI auto-capture ──────────────────────────────────────────────────────
+  const ai = useAIDetection()
+  const [aiAutoCapture, setAiAutoCapture] = useState(false)
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -417,7 +427,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const proj = currentProjectRef.current
       if (!proj) return
       const mergedDb = mergeDatabases(proj.database, data.project.database)
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory })
+      const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
       const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
@@ -584,6 +595,38 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       finalizeCapture(canvas)
     }
   }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture])
+
+  // ── AI: stable refs for callback ─────────────────────────────────────────
+  const capturePhaseRef = useRef(capturePhase)
+  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
+  const handleCaptureRef = useRef(handleCapture)
+  useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
+
+  // ── AI: Initialize when camera is ready ────────────────────────────────
+  useEffect(() => {
+    if (cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
+      ai.initialize().then((ok) => {
+        if (ok) console.log('[SAATIRIL OP] AI initialized')
+      })
+    }
+  }, [cameraAvailable, hasActiveTarget])
+
+  // ── AI: Start/stop detection based on auto-capture toggle ────────────
+  useEffect(() => {
+    if (aiAutoCapture && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
+      ai.startDetection(videoRef.current, (event: AIMomentEvent) => {
+        console.log('[SAATIRIL OP] AI moment:', event.type, 'phase:', capturePhaseRef.current)
+        const phase = capturePhaseRef.current
+        if (event.type === 'toga' && phase === 'ready-1') {
+          handleCaptureRef.current()
+        } else if (event.type === 'ijazah' && phase === 'ready-2') {
+          handleCaptureRef.current()
+        }
+      })
+    } else if (!aiAutoCapture && ai.isRunning) {
+      ai.stopDetection()
+    }
+  }, [aiAutoCapture, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
@@ -967,6 +1010,29 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           {/* Capture button */}
           <div className="px-3 pb-2 pt-1">
             {renderCaptureButton('large')}
+            {/* AI Auto-Capture toggle — mobile */}
+            {!readOnly && hasActiveTarget && (
+              <Button
+                onClick={() => setAiAutoCapture(!aiAutoCapture)}
+                className={`w-full h-10 mt-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
+                  aiAutoCapture ? 'animate-pulse' : ''
+                }`}
+                style={{
+                  backgroundColor: aiAutoCapture ? `${THEME.gold}33` : THEME.panel,
+                  color: aiAutoCapture ? THEME.gold : THEME.muted,
+                  border: `1.5px solid ${aiAutoCapture ? THEME.gold : THEME.border}`,
+                }}
+              >
+                {ai.status === 'loading' ? (
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                ) : aiAutoCapture ? (
+                  <Sparkles className="size-3.5 mr-1.5" />
+                ) : (
+                  <Brain className="size-3.5 mr-1.5" />
+                )}
+                {ai.status === 'loading' ? 'Memuat AI...' : aiAutoCapture ? 'AI Auto-Capture ON' : 'AI Auto-Capture OFF'}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1058,8 +1124,31 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         {renderQueueList(false)}
 
         {/* Capture Button */}
-        <div className="shrink-0">
+        <div className="shrink-0 space-y-1.5">
           {renderCaptureButton('normal')}
+          {/* AI Auto-Capture toggle — desktop */}
+          {!readOnly && hasActiveTarget && (
+            <Button
+              onClick={() => setAiAutoCapture(!aiAutoCapture)}
+              className={`w-full h-9 text-xs font-bold rounded-lg transition-all duration-200 ${
+                aiAutoCapture ? 'animate-pulse' : ''
+              }`}
+              style={{
+                backgroundColor: aiAutoCapture ? `${THEME.gold}33` : THEME.panel,
+                color: aiAutoCapture ? THEME.gold : THEME.muted,
+                border: `1.5px solid ${aiAutoCapture ? THEME.gold : THEME.border}`,
+              }}
+            >
+              {ai.status === 'loading' ? (
+                <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+              ) : aiAutoCapture ? (
+                <Sparkles className="size-3.5 mr-1.5" />
+              ) : (
+                <Brain className="size-3.5 mr-1.5" />
+              )}
+              {ai.status === 'loading' ? 'Memuat AI...' : aiAutoCapture ? 'AI Auto-Capture ON' : 'AI Auto-Capture OFF'}
+            </Button>
+          )}
         </div>
       </div>
     </div>

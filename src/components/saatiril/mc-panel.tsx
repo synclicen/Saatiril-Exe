@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -593,7 +594,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
             Sisa Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
           </h3>
-          <span className="text-xs" style={{ color: THEME.muted }}>Channel {myChannel}</span>
+          <div className="flex items-center gap-2">
+            <NetworkQualityBadge />
+            <span className="text-xs" style={{ color: THEME.muted }}>Channel {myChannel}</span>
+          </div>
         </div>
 
         <div

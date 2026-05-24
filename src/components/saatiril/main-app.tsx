@@ -377,16 +377,18 @@ export function MainApp() {
         <div className="flex flex-col gap-0">
           {/* Top row: back, project name, badge, server status */}
           <div className="flex items-center gap-2 px-2 py-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6">
-            {/* Back button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleBack}
-              className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
-              aria-label="Kembali ke hub"
-            >
-              <ArrowLeft className="size-5" />
-            </Button>
+            {/* Back button — only for Admin (MC/Operator should never navigate back to hub) */}
+            {myRole === 'admin' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleBack}
+                className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
+                aria-label="Kembali ke hub"
+              >
+                <ArrowLeft className="size-5" />
+              </Button>
+            )}
 
             {/* Project name */}
             <div className="min-w-0 flex-1">
