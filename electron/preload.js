@@ -28,4 +28,7 @@ contextBridge.exposeInMainWorld('saatirilAPI', {
 
   /** Get LAN IP addresses — returns array of {name, address} */
   getLanIPs: () => ipcRenderer.invoke('get-lan-ips'),
+
+  /** Create a folder on disk (recursive) — returns {success, path, error} */
+  createFolder: (folderPath) => ipcRenderer.invoke('create-folder', folderPath),
 })

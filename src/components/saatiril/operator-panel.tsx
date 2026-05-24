@@ -490,30 +490,38 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         // Also emit operator progress to signal completion
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
-        // ── Save photos to disk (Electron only) ────────────────────────────
+        // ── Save photos to disk (Electron only — also saved by Admin via PHOTOS_SAVED) ──
+        // In single mode (operator inside Electron), this saves directly.
+        // In dual mode (operator on LAN browser), this is skipped and Admin handles it.
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
           if (api?.savePhoto) {
             const targetFolder = projConfig.targetFolder
-            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
-            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+            if (targetFolder) {
+              const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
+              const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
 
-            // Save both photos in parallel (non-blocking)
-            Promise.all([
-              api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
-              api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
-            ]).then(([path1, path2]) => {
-              if (path1 && path2) {
-                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-              } else {
-                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
-              }
-            }).catch((err) => {
-              console.error('[SAATIRIL OP] Error saving photos to disk:', err)
-            })
+              console.log(`[SAATIRIL OP] Saving photos to: ${targetFolder}`)
+
+              // Save both photos in parallel (non-blocking)
+              Promise.all([
+                api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
+                api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
+              ]).then(([path1, path2]) => {
+                if (path1 && path2) {
+                  console.log(`[SAATIRIL OP] ✅ Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+                } else {
+                  console.warn('[SAATIRIL OP] ⚠️ Some photos failed to save to disk')
+                }
+              }).catch((err) => {
+                console.error('[SAATIRIL OP] ❌ Error saving photos to disk:', err)
+              })
+            } else {
+              console.warn('[SAATIRIL OP] No targetFolder in project config — photos not saved to disk')
+            }
           } else {
-            console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
+            console.log('[SAATIRIL OP] Not running in Electron — Admin will save photos to disk via PHOTOS_SAVED')
           }
         }
         setTimeout(() => {

@@ -310,13 +310,40 @@ export default function ProjectSetup() {
     // IMMEDIATE save before navigation to prevent data loss on first launch
     saveProjectsToStorageNow()
 
+    // ── Create project folder on disk (Electron only) ────────────────────
+    const api = window.saatirilAPI
+    if (api?.createFolder) {
+      api.createFolder(finalTargetFolder).then((result: { success: boolean; path?: string; error?: string }) => {
+        if (result.success) {
+          console.log(`[SAATIRIL] ✅ Project folder created: ${result.path}`)
+          toast({
+            title: 'Proyek Dibuat!',
+            description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat. Folder: ${finalTargetFolder}`,
+          })
+        } else {
+          console.error('[SAATIRIL] Failed to create project folder:', result.error)
+          toast({
+            title: 'Proyek Dibuat!',
+            description: `"${projectName.trim()}" — ${finalStudents.length} peserta. ⚠️ Folder gagal: ${result.error}`,
+            variant: 'destructive',
+          })
+        }
+      }).catch((err: Error) => {
+        console.error('[SAATIRIL] createFolder IPC error:', err)
+        toast({
+          title: 'Proyek Dibuat!',
+          description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
+        })
+      })
+    } else {
+      toast({
+        title: 'Proyek Dibuat!',
+        description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
+      })
+    }
+
     // Sync database over LAN — strip frame data to save bandwidth
     emitLocal('SYNC_DB', { project: stripFrameForSync(project) })
-
-    toast({
-      title: 'Proyek Dibuat!',
-      description: `"${projectName.trim()}" — ${finalStudents.length} peserta dimuat.`,
-    })
 
     // Small delay to ensure state is persisted before navigation
     setTimeout(() => {

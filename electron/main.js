@@ -403,6 +403,25 @@ ipcMain.handle('get-lan-ips', () => {
   return ips.map(ip => ({ name: ip.name, address: ip.address }))
 })
 
+ipcMain.handle('create-folder', async (event, folderPath) => {
+  try {
+    if (!folderPath) {
+      console.error('[SAATIRIL] create-folder: no path provided')
+      return { success: false, error: 'No path provided' }
+    }
+    if (!fs.existsSync(folderPath)) {
+      fs.mkdirSync(folderPath, { recursive: true })
+      console.log(`[SAATIRIL] ✅ Folder created: ${folderPath}`)
+    } else {
+      console.log(`[SAATIRIL] Folder already exists: ${folderPath}`)
+    }
+    return { success: true, path: folderPath }
+  } catch (e) {
+    console.error('[SAATIRIL] create-folder failed:', e.message)
+    return { success: false, error: e.message }
+  }
+})
+
 ipcMain.handle('select-folder', async (event, defaultPath) => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {

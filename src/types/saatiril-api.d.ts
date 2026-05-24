@@ -3,7 +3,6 @@
 interface LanInfo {
   httpPort: number
   socketPort: number
-  useHttps: boolean
   ips: Array<{ name: string; address: string }>
 }
 
@@ -19,6 +18,11 @@ interface SaatirilAPI {
     targetFolder: string
   }) => Promise<string | null>
   getLanIPs: () => Promise<Array<{ name: string; address: string }>>
+  createFolder: (folderPath: string) => Promise<{
+    success: boolean
+    path?: string
+    error?: string
+  }>
 }
 
 declare global {

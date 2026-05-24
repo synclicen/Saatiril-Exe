@@ -128,6 +128,33 @@ export default function AdminDashboard() {
       const proj = currentProjectRef.current
       if (!proj) return
 
+      // ── Save photos to disk (Admin is always in Electron) ──────────────
+      // This is the ONLY reliable place to save — Operator on LAN browser
+      // doesn't have filesystem access, so Admin must do it.
+      const api = window.saatirilAPI
+      const targetFolder = proj.config?.targetFolder
+      if (api?.savePhoto && targetFolder && data.photos?.length >= 2) {
+        const togaFilename = buildFilename(data.student.nim, data.student.nama, 1, 'Toga')
+        const ijazahFilename = buildFilename(data.student.nim, data.student.nama, 2, 'Ijazah')
+
+        Promise.all([
+          api.savePhoto({ base64Data: data.photos[0], filename: togaFilename, targetFolder }),
+          api.savePhoto({ base64Data: data.photos[1], filename: ijazahFilename, targetFolder }),
+        ]).then(([path1, path2]) => {
+          if (path1 && path2) {
+            console.log(`[SAATIRIL ADMIN] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+          } else {
+            console.warn('[SAATIRIL ADMIN] Some photos failed to save to disk')
+          }
+        }).catch((err) => {
+          console.error('[SAATIRIL ADMIN] Error saving photos to disk:', err)
+        })
+      } else if (!api?.savePhoto) {
+        console.warn('[SAATIRIL ADMIN] savePhoto API not available — not running in Electron?')
+      } else if (!targetFolder) {
+        console.warn('[SAATIRIL ADMIN] No targetFolder in project config — photos not saved to disk')
+      }
+
       // Build the history item from the data
       const historyItem: PhotoHistoryItem = {
         student: data.student,
