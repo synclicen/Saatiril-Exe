@@ -17,8 +17,8 @@ import { Server, Socket } from 'socket.io'
 // ─── Configuration ─────────────────────────────────────────────────────────
 const PORT = 3003
 const MAX_HTTP_BUFFER = 20e6 // 20MB — supports dual-channel photo bursts (4 × ~3MB base64)
-const PING_INTERVAL = 15000  // 15s — faster detection of disconnected clients
-const PING_TIMEOUT = 30000   // 30s — generous timeout for LAN (vs 60s default)
+const PING_INTERVAL = 10000  // 10s — faster detection of disconnected clients (was 15s)
+const PING_TIMEOUT = 20000   // 20s — generous timeout for LAN (was 30s)
 const MAX_CONNECTIONS = 10   // Max concurrent clients (admin + 2×MC + 2×OP + buffer)
 
 // ─── Health tracking ───────────────────────────────────────────────────────
@@ -123,6 +123,11 @@ io.on('connection', (socket: Socket) => {
       info.channel = data.channel
       console.log(`[SAATIRIL] Client identified: ${socket.id} → ${data.role} Ch.${data.channel}`)
     }
+  })
+
+  // ── Ping/pong for latency measurement ────────────────────────────────────
+  socket.on('saatiril-ping', (timestamp: number) => {
+    socket.emit('saatiril-pong', timestamp)
   })
 
   // ── Relay LAN messages between clients ──────────────────────────────────

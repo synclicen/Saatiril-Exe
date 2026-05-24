@@ -166,8 +166,8 @@ function staticFileHandler(req, res) {
 const SOCKET_IO_CONFIG = {
   path: '/',
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  pingTimeout: 30000,
-  pingInterval: 15000,
+  pingTimeout: 20000,
+  pingInterval: 10000,
   maxHttpBufferSize: 20e6,
   connectionStateRecovery: { maxDisconnectionDuration: 2 * 60 * 1000 },
   transports: ['websocket', 'polling'],
@@ -188,6 +188,11 @@ function setupSocketHandlers(io) {
       if (payload.event === 'PHOTOS_SAVED' || payload.event === 'MC_CALL' || payload.event === 'SYNC_DB') {
         console.log(`[SAATIRIL] Relay: ${payload.event} from ${socket.id}`)
       }
+    })
+
+    // Ping/pong for latency measurement
+    socket.on('saatiril-ping', (timestamp) => {
+      socket.emit('saatiril-pong', timestamp)
     })
 
     socket.on('identify', (data) => {

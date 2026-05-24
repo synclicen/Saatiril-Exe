@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
 import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
+import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -495,9 +496,12 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
               {remainingCount}
             </span>
           </h3>
-          <span className="text-xs" style={{ color: THEME.muted }}>
-            Channel {myChannel}
-          </span>
+          <div className="flex items-center gap-2">
+            <NetworkQualityBadge />
+            <span className="text-xs" style={{ color: THEME.muted }}>
+              Channel {myChannel}
+            </span>
+          </div>
         </div>
 
         {/* Column headers */}

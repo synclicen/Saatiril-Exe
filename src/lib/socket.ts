@@ -15,6 +15,13 @@ let lastEventTime: number | null = null
 let reconnectCount = 0
 let isReconnecting = false
 
+// ─── Latency tracking ─────────────────────────────────────────────────────
+let currentLatencyMs: number = -1   // -1 = unknown
+let latencyHistory: number[] = []   // Last 20 ping samples
+const MAX_LATENCY_HISTORY = 20
+let pingIntervalId: ReturnType<typeof setInterval> | null = null
+let pendingPingTimestamp: number | null = null
+
 export interface ConnectionHealth {
   connected: boolean
   connectTime: number | null
@@ -22,9 +29,28 @@ export interface ConnectionHealth {
   reconnectCount: number
   socketId: string | null
   uptime: number // seconds since connect
+  latencyMs: number  // -1 = unknown
+  avgLatencyMs: number // -1 = unknown
+  networkQuality: 'excellent' | 'good' | 'fair' | 'poor' | 'unknown'
+}
+
+/**
+ * Determine network quality based on average latency.
+ * For LAN: excellent <5ms, good <15ms, fair <30ms, poor >=30ms
+ */
+function classifyNetworkQuality(avgLatency: number): ConnectionHealth['networkQuality'] {
+  if (avgLatency < 0) return 'unknown'
+  if (avgLatency < 5) return 'excellent'
+  if (avgLatency < 15) return 'good'
+  if (avgLatency < 30) return 'fair'
+  return 'poor'
 }
 
 export function getConnectionHealth(): ConnectionHealth {
+  const avgLatency = latencyHistory.length > 0
+    ? latencyHistory.reduce((a, b) => a + b, 0) / latencyHistory.length
+    : -1
+
   return {
     connected: socket?.connected ?? false,
     connectTime,
@@ -32,6 +58,65 @@ export function getConnectionHealth(): ConnectionHealth {
     reconnectCount,
     socketId: socket?.id ?? null,
     uptime: connectTime ? Math.round((Date.now() - connectTime) / 1000) : 0,
+    latencyMs: currentLatencyMs,
+    avgLatencyMs: Math.round(avgLatency),
+    networkQuality: classifyNetworkQuality(avgLatency),
+  }
+}
+
+/** Subscribe to latency updates — called every 5s after ping measurement */
+type LatencyCallback = (health: ConnectionHealth) => void
+const latencyListeners: LatencyCallback[] = []
+
+export function onLatencyUpdate(cb: LatencyCallback) {
+  latencyListeners.push(cb)
+  return () => {
+    const idx = latencyListeners.indexOf(cb)
+    if (idx !== -1) latencyListeners.splice(idx, 1)
+  }
+}
+
+function notifyLatencyListeners() {
+  const health = getConnectionHealth()
+  for (const cb of latencyListeners) {
+    try { cb(health) } catch {}
+  }
+}
+
+// ─── Ping/pong measurement ────────────────────────────────────────────────
+function startPingMeasurement() {
+  stopPingMeasurement()
+  // Measure latency every 5 seconds
+  pingIntervalId = setInterval(() => {
+    if (!socket?.connected) return
+    pendingPingTimestamp = Date.now()
+    socket.emit('saatiril-ping', pendingPingTimestamp)
+  }, 5000)
+  // Do first ping immediately
+  if (socket?.connected) {
+    pendingPingTimestamp = Date.now()
+    socket.emit('saatiril-ping', pendingPingTimestamp)
+  }
+}
+
+function stopPingMeasurement() {
+  if (pingIntervalId) {
+    clearInterval(pingIntervalId)
+    pingIntervalId = null
+  }
+  pendingPingTimestamp = null
+}
+
+function handlePong(timestamp: number) {
+  if (pendingPingTimestamp && pendingPingTimestamp === timestamp) {
+    const latency = Date.now() - timestamp
+    currentLatencyMs = latency
+    latencyHistory.push(latency)
+    if (latencyHistory.length > MAX_LATENCY_HISTORY) {
+      latencyHistory.shift()
+    }
+    pendingPingTimestamp = null
+    notifyLatencyListeners()
   }
 }
 
@@ -142,7 +227,6 @@ export function connectSocket(): Socket {
 
   const socketUrl = getSocketUrl()
   const isElectron = !!(window as any).saatirilAPI?.isElectron
-  const isLanDevice = !isElectron && !!(new URLSearchParams(window.location.search).get('socketPort'))
 
   // All modes use the same options — Socket.io server is always path '/'
   const socketOptions = {
@@ -177,10 +261,17 @@ export function connectSocket(): Socket {
 
     // Flush any queued events from when we were disconnected
     flushEventQueue()
+
+    // Start ping measurement for latency tracking
+    startPingMeasurement()
   })
 
   socket.on('disconnect', (reason) => {
     console.warn('[SAATIRIL] Socket disconnected. Reason:', reason)
+    stopPingMeasurement()
+    currentLatencyMs = -1
+    notifyLatencyListeners()
+
     // If server initiated disconnect, we need manual reconnect
     if (reason === 'io server disconnect') {
       // Server kicked us — reconnect after delay
@@ -220,6 +311,9 @@ export function connectSocket(): Socket {
       socket?.connect()
     }, 5000)
   })
+
+  // ── Ping/pong handler for latency measurement ────────────────────────
+  socket.on('saatiril-pong', handlePong)
 
   // ── Server shutdown notification ──────────────────────────────────────
   socket.on('lan-message', (payload: { event: string; data: any }) => {

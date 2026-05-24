@@ -11,6 +11,8 @@ import {
   Image as ImageIcon,
   Clock,
   Radio,
+  Cable,
+  Zap,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -18,7 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases, preserveFrameOnSync } from '@/store/use-saatiril-store'
-import { onLocal, offLocal } from '@/lib/socket'
+import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
 // ── Theme constants ──────────────────────────────────────────────
@@ -235,6 +237,15 @@ export default function AdminDashboard() {
       offLocal('SYNC_DB', handleSyncDb)
     }
   }, [updateCurrentProject])
+
+  // ── Network quality state ──────────────────────────────────────
+  const [networkHealth, setNetworkHealth] = useState<ConnectionHealth>(getConnectionHealth())
+
+  useEffect(() => {
+    const unsub = onLatencyUpdate((h) => setNetworkHealth({ ...h }))
+    setNetworkHealth(getConnectionHealth())
+    return unsub
+  }, [])
 
   // ── LAN info state ────────────────────────────────────────────────
   const [lanInfo, setLanInfo] = useState<{ httpPort: number; socketPort: number; ips: { name: string; address: string }[] } | null>(null)
@@ -518,6 +529,78 @@ export default function AdminDashboard() {
   )
   }
 
+  // ── Render: Network Tips ──────────────────────────────────────────
+  const renderNetworkTips = () => {
+    const quality = networkHealth.networkQuality
+    const avgLatency = networkHealth.avgLatencyMs
+    const isPoor = quality === 'poor' || quality === 'fair'
+
+    return (
+      <Card className={`${PANEL} ${BORDER} shadow-lg`}>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
+            <Zap className="size-4" style={{ color: isPoor ? '#f87171' : GOLD }} />
+            Tips Jaringan
+            {avgLatency >= 0 && (
+              <Badge
+                className="text-[9px] ml-auto px-1.5 py-0.5 border-0"
+                style={{
+                  backgroundColor: quality === 'excellent' ? 'rgba(74,222,128,0.2)'
+                    : quality === 'good' ? 'rgba(163,230,53,0.2)'
+                    : quality === 'fair' ? 'rgba(251,191,36,0.2)'
+                    : quality === 'poor' ? 'rgba(248,113,113,0.2)'
+                    : 'rgba(196,181,253,0.15)',
+                  color: quality === 'excellent' ? '#4ade80'
+                    : quality === 'good' ? '#a3e635'
+                    : quality === 'fair' ? '#fbbf24'
+                    : quality === 'poor' ? '#f87171'
+                    : '#c4b5fd',
+                }}
+              >
+                {avgLatency}ms
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {/* Best practice */}
+          <div className="rounded-md p-2.5 text-xs" style={{ backgroundColor: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)', color: '#bbf7d0' }}>
+            <p className="font-semibold mb-1.5" style={{ color: '#4ade80' }}>✅ Rekomendasi Terbaik</p>
+            <ul className="space-y-1 pl-1">
+              <li className="flex items-start gap-1.5">
+                <Cable className="size-3 shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+                <span>Gunakan <strong>kabel LAN</strong> untuk semua perangkat (Admin, MC, Operator) — koneksi ke <strong>switch/router yang sama</strong></span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <Cable className="size-3 shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+                <span>Latency kabel LAN: &lt;1ms — <strong>hampir tanpa lag</strong></span>
+              </li>
+            </ul>
+          </div>
+
+          {/* WiFi alternative */}
+          <div className="rounded-md p-2.5 text-xs" style={{ backgroundColor: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', color: '#fef3c7' }}>
+            <p className="font-semibold mb-1.5" style={{ color: '#fbbf24' }}>⚠️ WiFi — Bisa Digunakan Tapi...</p>
+            <ul className="space-y-1 pl-1">
+              <li>• Semua perangkat harus terhubung ke <strong>router WiFi yang sama</strong></li>
+              <li>• Letakkan perangkat <strong>sedekat mungkin</strong> dengan router</li>
+              <li>• Latency WiFi: 5-30ms — <strong>mungkin ada lag sesekali</strong></li>
+              <li>• Hindari WiFi public/campus — terlalu banyak interferensi</li>
+            </ul>
+          </div>
+
+          {/* Current status */}
+          {isPoor && (
+            <div className="rounded-md p-2.5 text-xs" style={{ backgroundColor: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', color: '#fecaca' }}>
+              <p className="font-semibold mb-1" style={{ color: '#f87171' }}>🔴 Jaringan Anda Saat Ini: {quality.toUpperCase()}</p>
+              <p>Pertimbangkan untuk beralih ke kabel LAN untuk koneksi yang lebih stabil.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
   // ── Render: Photo History Item ───────────────────────────────────
   const renderPhotoItem = (item: PhotoHistoryItem, index: number) => {
     const { student, channel, photos } = item
@@ -640,6 +723,7 @@ export default function AdminDashboard() {
           {renderStatusPanel()}
           {renderLiveCommandCenter()}
           {renderLanAccess()}
+          {renderNetworkTips()}
         </div>
 
         {/* ── Right Column (2/3) ── */}

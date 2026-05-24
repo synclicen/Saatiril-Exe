@@ -40,6 +40,7 @@ import {
   preserveFrameOnSync,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
+import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -446,7 +447,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       setFlashVisible(true)
       setTimeout(() => setFlashVisible(false), 300)
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
+      // Quality 0.82: ~40% smaller than 0.95 with minimal visible quality loss
+      // Critical for reducing LAN lag — 6MB payload drops to ~3.5MB per student
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
       addOpCapturedPhoto(dataUrl)
 
       // Read CURRENT state from Zustand directly (not closure) to avoid stale values
@@ -820,6 +823,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                 Frame
               </Badge>
             )}
+            <NetworkQualityBadge />
           </div>
 
           {/* Hidden canvas for photo capture */}
