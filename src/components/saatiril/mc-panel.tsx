@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
@@ -123,10 +123,13 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       const curProj = currentProjectRef.current
       if (curProj && proj.id === curProj.id) {
         const mergedDb = mergeDatabases(curProj.database, proj.database)
+        // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
+        const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
         updateCurrentProject({
           ...curProj,
           database: mergedDb,
           photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
+          config: mergedConfig,
         })
       }
     }

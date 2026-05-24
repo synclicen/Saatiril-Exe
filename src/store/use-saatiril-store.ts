@@ -44,6 +44,41 @@ export type AppTab = 'admin' | 'mc' | 'operator'
 // Photos are still saved to disk by the Operator's SYNC_DB handler.
 const MAX_PHOTO_HISTORY_IN_MEMORY = 200
 
+// ─── Frame storage: separate localStorage keys for frame base64 data ──────────
+// Frame data can be 500KB-2MB and must survive page reloads.
+// We store it in separate localStorage keys so it's not lost when
+// the main project list is saved with '__FRAME_SAVED__' markers.
+const FRAME_KEY_PREFIX = 'saatiril_frame_'
+
+function saveFrameToStorage(projectId: string, frameData: string | null) {
+  try {
+    if (frameData && frameData !== '__FRAME_SAVED__') {
+      localStorage.setItem(`${FRAME_KEY_PREFIX}${projectId}`, frameData)
+    } else {
+      localStorage.removeItem(`${FRAME_KEY_PREFIX}${projectId}`)
+    }
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to save frame to separate storage:', e)
+  }
+}
+
+function loadFrameFromStorage(projectId: string): string | null {
+  try {
+    return localStorage.getItem(`${FRAME_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to load frame from separate storage:', e)
+    return null
+  }
+}
+
+function removeFrameFromStorage(projectId: string) {
+  try {
+    localStorage.removeItem(`${FRAME_KEY_PREFIX}${projectId}`)
+  } catch (e) {
+    console.error('[SAATIRIL] Failed to remove frame from separate storage:', e)
+  }
+}
+
 // ─── Student status priority for merge ───────────────────────────────────────
 // When merging databases from different clients, we keep the "most advanced" status.
 // pending (0) < active_N (1) < done (2)
@@ -91,6 +126,9 @@ export function mergeDatabases(
  * Strip frame base64 data from a project for SYNC_DB transmission.
  * Frame data can be 500KB-2MB and doesn't need to be re-sent every time.
  * Recipients who already have the frame don't need it again.
+ * 
+ * NOTE: The initial REQUEST_STATE response should NOT use this — new clients
+ * need the frame data. Only use this for subsequent SYNC_DB updates.
  */
 export function stripFrameForSync(project: Project): Project {
   if (!project.config.frame) return project
@@ -98,6 +136,29 @@ export function stripFrameForSync(project: Project): Project {
     ...project,
     config: { ...project.config, frame: '__FRAME_SAVED__' },
   }
+}
+
+/**
+ * Preserve frame data when receiving SYNC_DB with '__FRAME_SAVED__' marker.
+ * 
+ * When a client receives a SYNC_DB where the frame was stripped (marked as
+ * '__FRAME_SAVED__'), this function keeps the existing frame data from the
+ * current project. This ensures the frame overlay stays visible on the
+ * operator camera and photos continue to be captured with the frame applied.
+ */
+export function preserveFrameOnSync(
+  incomingConfig: ProjectConfig,
+  existingConfig: ProjectConfig | undefined,
+): ProjectConfig {
+  if (
+    incomingConfig.frame === '__FRAME_SAVED__' &&
+    existingConfig?.frame &&
+    existingConfig.frame !== '__FRAME_SAVED__'
+  ) {
+    return { ...incomingConfig, frame: existingConfig.frame }
+  }
+  // If incoming has actual frame data, or no existing frame, use incoming as-is
+  return incomingConfig
 }
 
 // ─── Debounced save ───────────────────────────────────────────────────────
@@ -163,22 +224,36 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
   opCapturedPhotos: [],
 
   setProjects: (projects) => set({ projects }),
-  addProject: (project) => set((s) => ({ projects: [...s.projects, project] })),
+  addProject: (project) => set((s) => {
+    // Save frame data to separate localStorage key immediately
+    saveFrameToStorage(project.id, project.config.frame)
+    return { projects: [...s.projects, project] }
+  }),
   deleteProject: (id) => set((s) => {
     const newProjects = s.projects.filter(p => p.id !== id)
     const shouldClearCurrent = s.currentProject?.id === id
+    // Remove frame data from separate localStorage key
+    removeFrameFromStorage(id)
     return {
       projects: newProjects,
       ...(shouldClearCurrent ? { currentProject: null } : {}),
     }
   }),
-  setCurrentProject: (project) => set({ currentProject: project }),
+  setCurrentProject: (project) => {
+    // Ensure frame data is in separate storage when setting current project
+    if (project) {
+      saveFrameToStorage(project.id, project.config.frame)
+    }
+    set({ currentProject: project })
+  },
   updateCurrentProject: (project) => set((s) => {
     // Auto-trim photo history to prevent memory bloat
     const trimmedProject = {
       ...project,
       photoHistory: trimPhotoHistory(project.photoHistory),
     }
+    // Save frame data to separate localStorage key
+    saveFrameToStorage(trimmedProject.id, trimmedProject.config.frame)
     const idx = s.projects.findIndex(p => p.id === trimmedProject.id)
     const newProjects = [...s.projects]
     if (idx !== -1) newProjects[idx] = trimmedProject
@@ -212,7 +287,17 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
       const saved = localStorage.getItem('saatiril_projects')
       if (saved) {
         const projects = JSON.parse(saved)
-        set({ projects })
+        // Restore frame data from separate localStorage keys
+        // (frames are saved separately because they're too large for the main JSON)
+        const restoredProjects = projects.map((p: Project) => {
+          const savedFrame = loadFrameFromStorage(p.id)
+          if (savedFrame && (!p.config.frame || p.config.frame === '__FRAME_SAVED__')) {
+            console.log(`[SAATIRIL] Restored frame for project: ${p.name}`)
+            return { ...p, config: { ...p.config, frame: savedFrame } }
+          }
+          return p
+        })
+        set({ projects: restoredProjects })
       }
     } catch (e) {
       console.error('Failed to load projects from storage', e)
@@ -225,7 +310,11 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     saveTimeout = setTimeout(() => {
       try {
         const { projects } = get()
-        // Save lightweight metadata (no base64 photos) but keep photo history structure
+        // Save frame data to separate localStorage keys first
+        for (const p of projects) {
+          saveFrameToStorage(p.id, p.config.frame)
+        }
+        // Save lightweight metadata (no base64 photos, frame in separate keys)
         // so admin gallery shows entries after reload (just without thumbnails)
         const safeProjects = projects.map(p => ({
           ...p,
@@ -245,7 +334,11 @@ export const useSaatirilStore = create<SaatirilState>((set, get) => ({
     if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
     try {
       const { projects } = get()
-      // Save lightweight metadata (no base64 photos) but keep photo history structure
+      // Save frame data to separate localStorage keys first
+      for (const p of projects) {
+        saveFrameToStorage(p.id, p.config.frame)
+      }
+      // Save lightweight metadata (no base64 photos, frame in separate keys)
       const safeProjects = projects.map(p => ({
         ...p,
         photoHistory: p.photoHistory.map(h => ({ ...h, photos: [] })),

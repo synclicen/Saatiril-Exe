@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { onLocal, offLocal } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -201,12 +201,15 @@ export default function AdminDashboard() {
     const handleSyncDb = (data: SyncDbData) => {
       const proj = currentProjectRef.current
       if (!proj) return
+      // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
+      const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
       // Merge database with incoming (prevents channel data overwrite in dual mode)
       const mergedDb = mergeDatabases(proj.database, data.project.database)
       updateCurrentProject({
         ...proj,
         database: mergedDb,
         photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory,
+        config: mergedConfig,
       })
 
       // Check if any active student in the synced DB is now done — clear live targets

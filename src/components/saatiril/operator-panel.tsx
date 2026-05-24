@@ -37,6 +37,7 @@ import {
   type PhotoHistoryItem,
   mergeDatabases,
   stripFrameForSync,
+  preserveFrameOnSync,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 
@@ -426,7 +427,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const proj = currentProjectRef.current
       if (!proj) return
       const mergedDb = mergeDatabases(proj.database, data.project.database)
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory })
+      // Preserve frame data: if incoming has '__FRAME_SAVED__', keep our existing frame
+      const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
       const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),

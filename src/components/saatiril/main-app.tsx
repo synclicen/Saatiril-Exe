@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, type ProjectConfig, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -231,6 +231,9 @@ export function MainApp() {
       const curProj = currentProjectRef.current
 
       if (role !== 'admin' && data.project) {
+        // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
+        const mergedConfig = preserveFrameOnSync(data.project.config, curProj?.config)
+
         // For MC/Operator: merge incoming database with local (prevents data regression)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
@@ -238,13 +241,21 @@ export function MainApp() {
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            config: mergedConfig,
           })
         } else {
-          updateCurrentProject(data.project)
+          // First project received — use full data including frame (if present)
+          updateCurrentProject({
+            ...data.project,
+            config: mergedConfig,
+          })
         }
         // Persist to localStorage so MC/Operator can recover on page refresh
         saveProjectsToStorageNow()
       } else if (role === 'admin' && data.project) {
+        // Preserve frame data for admin too (in case it was stripped by another client)
+        const mergedConfig = preserveFrameOnSync(data.project.config, curProj?.config)
+
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
@@ -252,6 +263,7 @@ export function MainApp() {
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
+            config: mergedConfig,
           })
         }
       }
@@ -261,7 +273,13 @@ export function MainApp() {
       const role = myRoleRef.current
       const curProj = currentProjectRef.current
       if (role === 'admin' && curProj) {
-        emitLocal('SYNC_DB', { project: stripFrameForSync(curProj) })
+        // CRITICAL: Send FULL project WITH frame data for initial state requests.
+        // New clients (MC/Operator) need the frame data for:
+        //   1. Camera overlay reference on Operator panel
+        //   2. Frame overlay on captured photos
+        // Without frame data, photos are captured without the frame overlay.
+        emitLocal('SYNC_DB', { project: curProj })
+        console.log('[SAATIRIL] Admin responded to REQUEST_STATE — sent full project with frame')
       }
     }
 
