@@ -206,6 +206,19 @@ export default function AdminDashboard() {
     }
   }, [updateCurrentProject])
 
+  // ── LAN info state ────────────────────────────────────────────────
+  const [lanInfo, setLanInfo] = useState<{ httpPort: number; httpsPort: number; socketPort: number; httpsAvailable: boolean; ips: { name: string; address: string }[] } | null>(null)
+
+  useEffect(() => {
+    const api = window.saatirilAPI
+    if (api?.isElectron && api.getLanInfo) {
+      api.getLanInfo().then((info: any) => {
+        setLanInfo(info)
+        console.log('[SAATIRIL] LAN info:', info)
+      }).catch(() => {})
+    }
+  }, [])
+
   // ── Copy link handler ────────────────────────────────────────────
   const copyLink = useCallback(
     async (role: string, channel: number) => {
@@ -214,50 +227,33 @@ export default function AdminDashboard() {
 
       let url: string
       if (isElectron) {
-        // Electron: get LAN info from main process to generate correct URL for other devices
         try {
-          const lanInfo = await api.getLanInfo()
-          const ips = lanInfo.ips
-          // Use the first non-internal LAN IP
+          const info = lanInfo || (await api.getLanInfo())
+          const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-          // Use HTTPS if available (required for camera access on LAN devices)
-          const scheme = lanInfo.useHttps ? 'https' : 'http'
-          url = `${scheme}://${lanIP}:${lanInfo.httpPort}/?role=${role}&channel=${channel}&socketPort=${lanInfo.socketPort}`
+
+          // MC doesn't need camera → HTTP is fine and more reliable
+          // Operator needs camera → HTTPS if available, HTTP + Chrome flag if not
+          if (role === 'operator' && info.httpsAvailable) {
+            // Operator with HTTPS: use HTTPS port for camera access
+            url = `https://${lanIP}:${info.httpsPort}/?role=${role}&channel=${channel}&socketPort=${info.httpsPort}`
+          } else {
+            // MC or Operator without HTTPS: use HTTP
+            url = `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
+          }
         } catch {
-          // Fallback: try to use current hostname
           const hostname = window.location.hostname
           const params = new URLSearchParams(window.location.search)
           const socketPort = params.get('socketPort') || '3003'
-          // Infer scheme from current page
           const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
           url = `${scheme}://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
         }
       } else {
-        // Web/sandbox: just role & channel (Caddy handles routing)
         url = `${window.location.origin}/?role=${role}&channel=${channel}`
       }
       try {
         if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).then(
-            () => {
-              toast({
-                title: 'Link disalin!',
-                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-              })
-            },
-            () => {
-              const textarea = document.createElement('textarea')
-              textarea.value = url
-              document.body.appendChild(textarea)
-              textarea.select()
-              document.execCommand('copy')
-              document.body.removeChild(textarea)
-              toast({
-                title: 'Link disalin!',
-                description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-              })
-            },
-          )
+          await navigator.clipboard.writeText(url)
         } else {
           const textarea = document.createElement('textarea')
           textarea.value = url
@@ -265,11 +261,11 @@ export default function AdminDashboard() {
           textarea.select()
           document.execCommand('copy')
           document.body.removeChild(textarea)
-          toast({
-            title: 'Link disalin!',
-            description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
-          })
         }
+        toast({
+          title: 'Link disalin!',
+          description: `${role.toUpperCase()} ${channel > 0 ? channel : ''} — ${url}`,
+        })
       } catch {
         toast({
           title: 'Gagal menyalin',
@@ -278,7 +274,7 @@ export default function AdminDashboard() {
         })
       }
     },
-    [toast],
+    [toast, lanInfo],
   )
 
   // ── Render: Status Panel ─────────────────────────────────────────
@@ -394,7 +390,8 @@ export default function AdminDashboard() {
   // ── Render: LAN Access Distribution ──────────────────────────────
   const renderLanAccess = () => {
     const isElectron = !!(window as any).saatirilAPI?.isElectron
-    const isSecure = typeof window !== 'undefined' && window.isSecureContext
+    const httpsAvailable = lanInfo?.httpsAvailable ?? false
+    const lanIP = lanInfo?.ips?.[0]?.address ?? ''
 
     return (
     <Card className={`${PANEL} ${BORDER} shadow-lg`}>
@@ -402,7 +399,7 @@ export default function AdminDashboard() {
         <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
           <Wifi className="size-4" style={{ color: GOLD }} />
           LAN Access Distribution
-          {isSecure && (
+          {httpsAvailable && (
             <Badge className="text-[8px] px-1.5 py-0.5 ml-1" style={{ backgroundColor: '#22c55e22', color: '#4ade80', border: '1px solid #22c55e44' }}>
               🔒 HTTPS
             </Badge>
@@ -410,9 +407,14 @@ export default function AdminDashboard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {!isSecure && isElectron && (
-          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#ef444415', border: '1px solid #ef444433', color: '#fca5a5' }}>
-            ⚠️ Kamera operator tidak akan berfungsi tanpa HTTPS. Restart aplikasi untuk mengaktifkan HTTPS.
+        {httpsAvailable && (
+          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
+            ✅ HTTPS aktif — Kamera operator akan berfungsi. Operator perlu klik &quot;Advanced&quot; → &quot;Proceed&quot; saat peringatan sertifikat muncul di browser.
+          </div>
+        )}
+        {!httpsAvailable && isElectron && (
+          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
+            ⚠️ HTTPS tidak aktif — Kamera operator perlu Chrome Flag. Instruksi: Buka <code className="px-1 rounded" style={{ backgroundColor: '#00000033' }}>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code> → tambah <code className="px-1 rounded" style={{ backgroundColor: '#00000033' }}>http://{lanIP || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code> → Enable → Relaunch
           </div>
         )}
         {mode === 'single' ? (

@@ -134,16 +134,18 @@ export function MainApp() {
     }
   }, [])
 
-  // ── Detect HTTP port for LAN access ───────────────────────────────────────
+  // ── Detect HTTP/HTTPS ports for LAN access ────────────────────────────────
   const [httpPort, setHttpPort] = useState(3000)
-  const [useHttps, setUseHttps] = useState(false)
+  const [httpsPort, setHttpsPort] = useState(3001)
+  const [httpsAvailable, setHttpsAvailable] = useState(false)
 
   useEffect(() => {
     const api = window.saatirilAPI
     if (api?.isElectron && api.getLanInfo) {
-      api.getLanInfo().then((info: { httpPort: number; useHttps: boolean }) => {
+      api.getLanInfo().then((info: { httpPort: number; httpsPort: number; socketPort: number; httpsAvailable: boolean }) => {
         setHttpPort(info.httpPort)
-        setUseHttps(info.useHttps)
+        setHttpsPort(info.httpsPort)
+        setHttpsAvailable(info.httpsAvailable)
       }).catch(() => {})
     }
   }, [])
@@ -151,11 +153,11 @@ export function MainApp() {
   // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
-    const scheme = useHttps ? 'https' : 'http'
-    navigator.clipboard.writeText(`${scheme}://${lanIP}:${httpPort}`)
+    // Default to HTTP for general sharing; HTTPS is for operator camera only
+    navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
     setCopiedIP(true)
     setTimeout(() => setCopiedIP(false), 2000)
-  }, [lanIP, httpPort, useHttps])
+  }, [lanIP, httpPort])
 
   // ── URL parameter handling (run once on mount) ────────────────────────────
   useEffect(() => {
@@ -444,13 +446,13 @@ export function MainApp() {
                 title="Klik untuk salin alamat LAN"
               >
                 <Wifi className="size-3" style={{ color: THEME.gold }} />
-                {useHttps && (
+                {httpsAvailable && (
                   <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#22c55e33', color: '#4ade80' }}>
                     HTTPS
                   </span>
                 )}
                 <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
-                  {useHttps ? 'https' : 'http'}://{lanIP}:{httpPort}
+                  http://{lanIP}:{httpPort}
                 </span>
                 {copiedIP ? (
                   <Check className="size-3" style={{ color: '#22c55e' }} />

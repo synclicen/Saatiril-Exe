@@ -38,18 +38,21 @@ export function getConnectionHealth(): ConnectionHealth {
 /**
  * Get the Socket.io server URL.
  *
- * Three connection modes:
+ * Connection modes:
  *
  * 1. Electron desktop (admin):
  *    - Read socketPort from URL query parameter (passed by Electron main process)
- *    - Connect directly to localhost:PORT
+ *    - Connect directly to localhost:PORT (always HTTP)
  *
- * 2. LAN device (MC/Operator on their own device):
- *    - Has socketPort in URL params (added by copyLink)
- *    - Connect directly to http(s)://<current-hostname>:<socketPort>
- *    - Uses HTTPS if the page is served over HTTPS (self-signed cert from Electron)
+ * 2. LAN device — MC on HTTP:
+ *    - socketPort is the HTTP Socket.io port (3003)
+ *    - Connect via http://hostname:socketPort
  *
- * 3. Web/sandbox mode (development):
+ * 3. LAN device — Operator on HTTPS:
+ *    - socketPort is the HTTPS port (3001) where HTTPS Socket.io also runs
+ *    - Connect via https://hostname:socketPort
+ *
+ * 4. Web/sandbox mode (development):
  *    - Use XTransformPort=3003 for Caddy gateway routing
  */
 function getSocketUrl(): string {
@@ -61,22 +64,22 @@ function getSocketUrl(): string {
   const socketPortParam = params.get('socketPort')
 
   if (isElectron) {
-    // Electron: read socketPort from URL params, connect directly
+    // Electron admin: always connect via HTTP localhost
     const port = socketPortParam || '3003'
     return `http://localhost:${port}`
   }
 
-  // LAN device: if socketPort is provided in URL, connect directly
-  // This happens when MC/Operator opens a shared link on their own device
+  // LAN device: socketPort determines which server to connect to
   if (socketPortParam) {
     const hostname = window.location.hostname
-    // Use the same scheme as the page (HTTPS if self-signed cert from Electron)
+    // Use the SAME scheme as the current page
+    // If operator is on HTTPS page, Socket.io must also be HTTPS (mixed content blocking)
+    // If MC is on HTTP page, Socket.io uses HTTP
     const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
     return `${scheme}://${hostname}:${socketPortParam}`
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort
-  // DO NOT change the path, it is used by Caddy to forward the request to the correct port
   return '/?XTransformPort=3003'
 }
 

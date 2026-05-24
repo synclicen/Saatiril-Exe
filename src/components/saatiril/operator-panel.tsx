@@ -702,7 +702,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
           {/* NO CAMERA SIGNAL / ERROR overlay */}
           {!cameraAvailable && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 px-4" style={{ zIndex: 8 }}>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 px-4 overflow-y-auto" style={{ zIndex: 8 }}>
               {cameraError === 'insecure-context' ? (
                 <>
                   <VideoOff className="size-12" style={{ color: '#ef4444' }} />
@@ -712,17 +712,51 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                   <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
                     Browser memblokir akses kamera karena koneksi tidak aman (HTTP).
                   </p>
-                  <div className="mt-2 rounded-lg p-3 text-center max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.border}` }}>
+
+                  {/* Chrome Flag method — ALWAYS works */}
+                  <div className="mt-2 rounded-lg p-3 max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.gold}66` }}>
                     <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.gold }}>
-                      Cara Memperbaiki
+                      ✅ Cara 1: Chrome Flag (Paling Mudah)
                     </p>
                     <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.muted }}>
-                      <li>1. Minta Admin menyalin link HTTPS dari panel LAN</li>
-                      <li>2. Buka link HTTPS di browser (mis: https://192.168.x.x:3000)</li>
-                      <li>3. Klik &quot;Advanced&quot; → &quot;Proceed&quot; pada peringatan sertifikat</li>
-                      <li>4. Kamera akan otomatis aktif</li>
+                      <li>1. Buka tab baru, ketik: <code className="px-1 rounded" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
+                      <li>2. Cari: <code className="px-1 rounded" style={{ backgroundColor: '#00000044' }}>insecure origin</code></li>
+                      <li>3. Pada &quot;Insecure origins treated as secure&quot;, masukkan:</li>
+                      <li className="pl-2"><code className="px-1 rounded break-all" style={{ backgroundColor: '#00000044', color: THEME.gold }}>{window.location.origin}</code></li>
+                      <li>4. Pilih &quot;Enabled&quot; → Klik &quot;Relaunch&quot;</li>
+                      <li>5. Buka kembali link operator — kamera akan aktif!</li>
                     </ol>
                   </div>
+
+                  {/* HTTPS method — requires admin to have HTTPS active */}
+                  <div className="mt-2 rounded-lg p-3 max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.border}` }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.muted }}>
+                      Cara 2: Link HTTPS (Jika Tersedia)
+                    </p>
+                    <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.border }}>
+                      <li>1. Minta Admin menyalin link HTTPS dari panel LAN</li>
+                      <li>2. Buka link HTTPS di browser</li>
+                      <li>3. Klik &quot;Advanced&quot; → &quot;Proceed&quot; pada peringatan sertifikat</li>
+                    </ol>
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      // Try to redirect to HTTPS version
+                      if (window.location.protocol === 'http:') {
+                        // Replace http: with https: and try port 3001
+                        const currentHost = window.location.hostname
+                        const currentParams = window.location.search
+                        window.location.href = `https://${currentHost}:3001/${currentParams}`
+                      } else {
+                        startCamera()
+                      }
+                    }}
+                    className="mt-2 text-xs h-8 px-4"
+                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
+                  >
+                    Coba HTTPS
+                  </Button>
                 </>
               ) : cameraError === 'permission-denied' ? (
                 <>
