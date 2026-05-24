@@ -29,9 +29,9 @@ import {
   VideoOff,
   Aperture,
   Frame,
-  Brain,
-  Sparkles,
-  Zap,
+  List,
+  X,
+  SwitchCamera,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -40,11 +40,9 @@ import {
   type PhotoHistoryItem,
   mergeDatabases,
   stripFrameForSync,
-  preserveFrameOnSync,
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
-import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
-import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -57,25 +55,15 @@ const THEME = {
 } as const
 
 // ─── Filter preset map ──────────────────────────────────────────────────────
-// Professional presets inspired by Lightroom parameters
-// Each preset uses CSS filter combinations: brightness, contrast, saturate, sepia, hue-rotate
 const PRESET_FILTERS: Record<string, string> = {
   original: 'none',
-  // Warm & bright — studio lighting feel
   studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
-  // Cinematic golden tones
   cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
-  // Pro high contrast with slight sharpening simulation
   pro: 'contrast(1.25) brightness(1.05) saturate(1.15)',
-  // Vivid — enhanced colors for outdoor/graduation settings
   vivid: 'brightness(1.08) contrast(1.12) saturate(1.45) hue-rotate(5deg)',
-  // Soft Portrait — gentle warmth with reduced contrast for flattering skin
   softPortrait: 'brightness(1.12) contrast(0.92) saturate(1.08) sepia(0.08)',
-  // Classic Film — vintage film look with muted highlights
   classicFilm: 'brightness(1.02) contrast(1.15) saturate(0.85) sepia(0.2)',
-  // Dramatic B&W — high contrast black and white
   dramaticBW: 'brightness(1.05) contrast(1.35) saturate(0) grayscale(1)',
-  // Warm Sunset — warm orange/golden tones
   warmSunset: 'brightness(1.06) contrast(1.08) saturate(1.3) sepia(0.18) hue-rotate(-10deg)',
 }
 
@@ -116,10 +104,6 @@ function statusLabel(status: StudentStatus): string {
   return ch != null ? `Foto Ch.${ch}` : 'Aktif'
 }
 
-/**
- * Calculate the largest rectangle that fits within available space
- * while maintaining the target aspect ratio.
- */
 function fitAspectRatio(
   availW: number,
   availH: number,
@@ -136,9 +120,7 @@ function fitAspectRatio(
 // ─── Capture state machine ──────────────────────────────────────────────────
 type CapturePhase = 'standby' | 'ready-1' | 'ready-2' | 'sending'
 
-// ─── Camera error types ─────────────────────────────────────────────────────
-type CameraErrorType = 'none' | 'insecure-context' | 'permission-denied' | 'no-devices' | 'unknown'
-
+// ─── Video device info ──────────────────────────────────────────────────────
 interface VideoDeviceInfo {
   deviceId: string
   label: string
@@ -168,6 +150,8 @@ interface SyncDbData {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
+  const isMobile = useIsMobile()
+
   // ── Store ────────────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const myChannel = useSaatirilStore((s) => s.myChannel)
@@ -184,22 +168,11 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [cameraAvailable, setCameraAvailable] = useState(false)
-  const [cameraError, setCameraError] = useState<CameraErrorType>(() => {
-    // Detect insecure context at initialization time (not in an effect).
-    // Browsers require HTTPS (secure context) for getUserMedia() camera access.
-    if (typeof window !== 'undefined' && !window.isSecureContext) {
-      return 'insecure-context'
-    }
-    return 'none'
-  })
   const [flashVisible, setFlashVisible] = useState(false)
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
-  const isCapturingRef = useRef(false) // Guard against rapid capture clicks
-
-  // ── AI auto-capture ──────────────────────────────────────────────────────
-  const ai = useAIDetection()
-  const [aiAutoCapture, setAiAutoCapture] = useState(false)
+  const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
+  const isCapturingRef = useRef(false)
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -216,18 +189,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const config = currentProject?.config
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
-  const frameData = config?.frame && config.frame !== '__FRAME_SAVED__' ? config.frame : null
+  const frameData = config?.frame ?? null
 
   // ── Resize Observer: calculate camera dimensions ─────────────────────────
-  // Watches the camera zone wrapper and calculates the optimal camera size
-  // that fits within the available space while maintaining the aspect ratio.
   useEffect(() => {
     const zone = cameraZoneRef.current
     if (!zone) return
 
     const updateSize = () => {
       const rect = zone.getBoundingClientRect()
-      const padding = 16 // 8px on each side
+      const padding = isMobile ? 8 : 16
       const availW = rect.width - padding
       const availH = rect.height - padding
       if (availW > 0 && availH > 0) {
@@ -239,7 +210,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     const observer = new ResizeObserver(updateSize)
     observer.observe(zone)
     return () => observer.disconnect()
-  }, [aspectRatio])
+  }, [aspectRatio, isMobile])
 
   // ── Preload frame image ──────────────────────────────────────────────────
   useEffect(() => {
@@ -289,10 +260,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [currentlyActive, nextPending])
 
-  // ── Camera: secure context check is done in state initialization above ─────
-  // If insecure context is detected, cameraError will be 'insecure-context'
-  // and the camera overlay will show instructions for fixing it.
-
   // ── Camera: enumerate devices ────────────────────────────────────────────
   const enumerateVideoDevices = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices) return
@@ -304,15 +271,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           deviceId: d.deviceId,
           label: d.label || `Kamera ${d.deviceId.slice(0, 6)}`,
         }))
-      console.log('[SAATIRIL OP] Enumerated video devices:', videoInputs.length)
       setVideoDevices(videoInputs)
       if (videoInputs.length > 0 && !selectedDeviceRef.current) {
         setSelectedDeviceId(videoInputs[0].deviceId)
         selectedDeviceRef.current = videoInputs[0].deviceId
-      }
-      // Only set no-devices error if there's no existing error (avoid overwriting more specific errors)
-      if (videoInputs.length === 0) {
-        setCameraError((prev) => prev === 'none' ? 'no-devices' : prev)
       }
     } catch (err) {
       console.error('[SAATIRIL OP] Failed to enumerate devices:', err)
@@ -320,60 +282,70 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   }, [])
 
   // ── Camera: start stream ─────────────────────────────────────────────────
+  // Mobile: default to rear camera (facingMode: 'environment')
+  // Desktop: default to first available camera
   const startCamera = useCallback(
     async (deviceId?: string) => {
-      // Check for secure context first
-      if (typeof window !== 'undefined' && !window.isSecureContext) {
-        setCameraError('insecure-context')
-        setCameraAvailable(false)
-        return
-      }
-
       if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-        setCameraError('insecure-context')
         setCameraAvailable(false)
         return
       }
-
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
-      const constraints: MediaStreamConstraints = {
-        video: deviceId
-          ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-          : { width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
+
+      let constraints: MediaStreamConstraints
+      if (deviceId) {
+        // Specific device selected
+        constraints = {
+          video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        }
+      } else if (isMobile) {
+        // Mobile: prefer rear camera
+        constraints = {
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        }
+      } else {
+        // Desktop: any camera
+        constraints = {
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        }
       }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         streamRef.current = stream
         setCameraAvailable(true)
-        setCameraError('none')
         if (videoRef.current) videoRef.current.srcObject = stream
         await enumerateVideoDevices()
-        console.log('[SAATIRIL OP] ✅ Camera started successfully')
-      } catch (err: any) {
-        console.error('[SAATIRIL OP] Camera access failed:', err?.name, err?.message)
-
-        // Classify the error for user-friendly messaging
-        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-          setCameraError('permission-denied')
-        } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-          setCameraError('no-devices')
-        } else if (
-          err?.message?.includes('secure context') ||
-          err?.message?.includes('Only secure origins') ||
-          err?.name === 'NotSupportedError'
-        ) {
-          setCameraError('insecure-context')
+      } catch (err) {
+        console.error('[SAATIRIL OP] Camera access failed:', err)
+        // Fallback: if facingMode fails, try without it
+        if (isMobile && !deviceId) {
+          try {
+            const fallbackConstraints: MediaStreamConstraints = {
+              video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+              audio: false,
+            }
+            const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints)
+            streamRef.current = stream
+            setCameraAvailable(true)
+            if (videoRef.current) videoRef.current.srcObject = stream
+            await enumerateVideoDevices()
+          } catch (fallbackErr) {
+            console.error('[SAATIRIL OP] Camera fallback also failed:', fallbackErr)
+            setCameraAvailable(false)
+          }
         } else {
-          setCameraError('unknown')
+          setCameraAvailable(false)
         }
-        setCameraAvailable(false)
       }
     },
-    [enumerateVideoDevices],
+    [enumerateVideoDevices, isMobile],
   )
 
   useEffect(() => {
@@ -400,6 +372,16 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { navigator.mediaDevices.removeEventListener('devicechange', handler) }
   }, [enumerateVideoDevices])
 
+  // ── Switch camera (mobile: toggle front/rear) ────────────────────────────
+  const handleSwitchCamera = useCallback(async () => {
+    if (videoDevices.length < 2) return
+    const currentIdx = videoDevices.findIndex((d) => d.deviceId === selectedDeviceId)
+    const nextIdx = (currentIdx + 1) % videoDevices.length
+    const nextDeviceId = videoDevices[nextIdx].deviceId
+    setSelectedDeviceId(nextDeviceId)
+    selectedDeviceRef.current = nextDeviceId
+  }, [videoDevices, selectedDeviceId])
+
   // ── Refs for stable handlers ─────────────────────────────────────────────
   const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
@@ -415,7 +397,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (activeStudent) {
       setOpCurrentTarget(activeStudent)
     } else if (opCurrentTarget && !isActiveStatus(opCurrentTarget.status)) {
-      // Clear stale target if the student is no longer active (e.g., marked done by another client)
       setOpCurrentTarget(null)
     }
   }, [currentProject, myChannel, setOpCurrentTarget])
@@ -436,9 +417,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       const proj = currentProjectRef.current
       if (!proj) return
       const mergedDb = mergeDatabases(proj.database, data.project.database)
-      // Preserve frame data: if incoming has '__FRAME_SAVED__', keep our existing frame
-      const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
+      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory })
       const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
@@ -455,25 +434,19 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
       setFlashVisible(true)
       setTimeout(() => setFlashVisible(false), 300)
 
-      // Quality 0.82: ~40% smaller than 0.95 with minimal visible quality loss
-      // Critical for reducing LAN lag — 6MB payload drops to ~3.5MB per student
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       addOpCapturedPhoto(dataUrl)
 
-      // Read CURRENT state from Zustand directly (not closure) to avoid stale values
       const currentPhotos = useSaatirilStore.getState().opCapturedPhotos
       const currentTarget = useSaatirilStore.getState().opCurrentTarget
       const photoCount = currentPhotos.length
 
-      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount, 'opCapturedPhotos =', currentPhotos.length)
+      console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount)
 
       if (photoCount === 1) {
-        // First photo just added (was 0, now 1)
         isCapturingRef.current = false
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
       } else if (photoCount >= 2) {
-        // Second photo just added (was 1, now 2) — finalize
-        // Guard: if target was cleared (e.g., by SYNC_DB), abort safely
         if (!currentTarget) {
           console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
           setSending(false)
@@ -494,48 +467,35 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
         console.log('[SAATIRIL OP] Emitting PHOTOS_SAVED for student:', student.nama, 'channel:', myChannel)
 
-        // Emit PHOTOS_SAVED with student status as 'done' so MC/Admin
-        // can immediately update their local stores without waiting for SYNC_DB
         emitLocal('PHOTOS_SAVED', {
           student: { ...student, status: 'done' },
           photos: allPhotos,
           channel: myChannel,
         })
-        // Also emit operator progress to signal completion
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Selesai — Menunggu target...' })
 
-        // ── Save photos to disk (Electron only — also saved by Admin via PHOTOS_SAVED) ──
-        // In single mode (operator inside Electron), this saves directly.
-        // In dual mode (operator on LAN browser), this is skipped and Admin handles it.
         const projConfig = useSaatirilStore.getState().currentProject?.config
         if (projConfig) {
           const api = window.saatirilAPI
           if (api?.savePhoto) {
             const targetFolder = projConfig.targetFolder
-            if (targetFolder) {
-              const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
-              const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
+            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
 
-              console.log(`[SAATIRIL OP] Saving photos to: ${targetFolder}`)
-
-              // Save both photos in parallel (non-blocking)
-              Promise.all([
-                api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
-                api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
-              ]).then(([path1, path2]) => {
-                if (path1 && path2) {
-                  console.log(`[SAATIRIL OP] ✅ Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-                } else {
-                  console.warn('[SAATIRIL OP] ⚠️ Some photos failed to save to disk')
-                }
-              }).catch((err) => {
-                console.error('[SAATIRIL OP] ❌ Error saving photos to disk:', err)
-              })
-            } else {
-              console.warn('[SAATIRIL OP] No targetFolder in project config — photos not saved to disk')
-            }
+            Promise.all([
+              api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
+              api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
+            ]).then(([path1, path2]) => {
+              if (path1 && path2) {
+                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+              } else {
+                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
+              }
+            }).catch((err) => {
+              console.error('[SAATIRIL OP] Error saving photos to disk:', err)
+            })
           } else {
-            console.log('[SAATIRIL OP] Not running in Electron — Admin will save photos to disk via PHOTOS_SAVED')
+            console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
           }
         }
         setTimeout(() => {
@@ -568,7 +528,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const handleCapture = useCallback(() => {
     if (!opCurrentTarget) return
     if (capturePhase !== 'ready-1' && capturePhase !== 'ready-2') return
-    if (isCapturingRef.current) return // Prevent rapid double-click
+    if (isCapturingRef.current) return
     isCapturingRef.current = true
 
     const canvas = canvasRef.current
@@ -625,38 +585,6 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture])
 
-  // ── AI: stable refs for callback ─────────────────────────────────────────
-  const capturePhaseRef = useRef(capturePhase)
-  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
-  const handleCaptureRef = useRef(handleCapture)
-  useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
-
-  // ── AI: Initialize when camera is ready ────────────────────────────────
-  useEffect(() => {
-    if (cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
-      ai.initialize().then((ok) => {
-        if (ok) console.log('[SAATIRIL OP] AI initialized')
-      })
-    }
-  }, [cameraAvailable, hasActiveTarget])
-
-  // ── AI: Start/stop detection based on auto-capture toggle ────────────
-  useEffect(() => {
-    if (aiAutoCapture && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
-      ai.startDetection(videoRef.current, (event: AIMomentEvent) => {
-        console.log('[SAATIRIL OP] AI moment:', event.type, 'phase:', capturePhaseRef.current)
-        const phase = capturePhaseRef.current
-        if (event.type === 'toga' && phase === 'ready-1') {
-          handleCaptureRef.current()
-        } else if (event.type === 'ijazah' && phase === 'ready-2') {
-          handleCaptureRef.current()
-        }
-      })
-    } else if (!aiAutoCapture && ai.isRunning) {
-      ai.stopDetection()
-    }
-  }, [aiAutoCapture, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
-
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
@@ -683,6 +611,224 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     return <Badge className="text-[10px] px-1.5 py-0" style={{ backgroundColor: `${THEME.border}44`, color: THEME.muted, border: `1px solid ${THEME.border}` }}><Clock className="size-3 mr-0.5" />Menunggu</Badge>
   }
 
+  // ── Shared camera view component ─────────────────────────────────────────
+  const renderCameraView = () => (
+    <div
+      className="relative rounded-xl overflow-hidden border-2"
+      style={{
+        width: cameraDims.width > 0 ? cameraDims.width : undefined,
+        height: cameraDims.height > 0 ? cameraDims.height : undefined,
+        borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+        boxShadow: hasActiveTarget ? `0 0 16px ${THEME.gold}15` : 'none',
+        backgroundColor: '#000000',
+      }}
+    >
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{
+          filter: cssFilter !== 'none' ? cssFilter : undefined,
+        }}
+      />
+
+      {frameData && (
+        <img
+          src={frameData}
+          alt="Frame overlay"
+          className="absolute inset-0 w-full h-full object-fill pointer-events-none"
+          style={{ zIndex: 5 }}
+        />
+      )}
+
+      {/* Rule of thirds grid */}
+      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 6 }}>
+        <div className="absolute top-0 bottom-0 left-[33.333%] w-px bg-white/[0.12]" />
+        <div className="absolute top-0 bottom-0 left-[66.666%] w-px bg-white/[0.12]" />
+        <div className="absolute left-0 right-0 top-[33.333%] h-px bg-white/[0.12]" />
+        <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
+      </div>
+
+      {/* Flash overlay */}
+      <div
+        ref={flashRef}
+        className="absolute inset-0 transition-opacity duration-150 pointer-events-none"
+        style={{
+          backgroundColor: '#ffffff',
+          opacity: flashVisible ? 0.85 : 0,
+          zIndex: 20,
+        }}
+      />
+
+      {/* NO CAMERA SIGNAL */}
+      {!cameraAvailable && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80" style={{ zIndex: 8 }}>
+          <VideoOff className={isMobile ? 'size-8' : 'size-12'} style={{ color: THEME.border }} />
+          <p className={`font-semibold tracking-wider ${isMobile ? 'text-xs' : 'text-sm'}`} style={{ color: THEME.muted }}>
+            NO CAMERA SIGNAL
+          </p>
+          <p className="text-[10px]" style={{ color: THEME.border }}>
+            Pastikan kamera terhubung dan izin diberikan
+          </p>
+        </div>
+      )}
+
+      {/* Aspect ratio & frame badges */}
+      <div className="absolute top-2 left-2 flex gap-1.5" style={{ zIndex: 10 }}>
+        <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.muted }}>
+          {config?.ratio ?? '4:3'}
+        </Badge>
+        {frameData && (
+          <Badge className="text-[9px] px-1.5 py-0.5 border-0" style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}>
+            <Frame className="size-2.5 mr-0.5" />Frame
+          </Badge>
+        )}
+      </div>
+
+      {/* Mobile: Switch camera button */}
+      {isMobile && videoDevices.length > 1 && (
+        <button
+          onClick={handleSwitchCamera}
+          className="absolute top-2 right-2 flex items-center justify-center w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm cursor-pointer active:scale-95 transition-transform"
+          style={{ zIndex: 10 }}
+          title="Ganti kamera"
+        >
+          <SwitchCamera className="size-4" style={{ color: THEME.gold }} />
+        </button>
+      )}
+
+      <canvas ref={canvasRef} className="hidden" />
+    </div>
+  )
+
+  // ── Capture button (shared) ──────────────────────────────────────────────
+  const renderCaptureButton = (size: 'normal' | 'large' = 'normal') => {
+    const btnClass = size === 'large'
+      ? 'w-full h-14 text-base font-bold cursor-pointer rounded-lg transition-all duration-200 active:scale-[0.97]'
+      : 'w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]'
+
+    if (readOnly) {
+      return (
+        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
+          <Monitor className="size-4 mr-2" />MODE MONITOR
+        </Button>
+      )
+    }
+
+    if (capturePhase === 'standby') {
+      return (
+        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}`, opacity: 0.6 }}>
+          <Aperture className="size-4 mr-2" />STANDBY
+        </Button>
+      )
+    }
+
+    if (capturePhase === 'ready-1') {
+      return (
+        <Button onClick={handleCapture} className={btnClass} style={{ backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }}>
+          <Camera className="size-4 mr-2" />FOTO 1 — TOGA
+        </Button>
+      )
+    }
+
+    if (capturePhase === 'ready-2') {
+      return (
+        <Button onClick={handleCapture} className={btnClass} style={{ backgroundColor: '#22c55e', color: '#ffffff', border: '2px solid #22c55e', boxShadow: '0 0 30px #22c55e44, 0 0 60px #22c55e22' }}>
+          <Camera className="size-4 mr-2" />FOTO 2 — IJAZAH
+        </Button>
+      )
+    }
+
+    if (capturePhase === 'sending') {
+      return (
+        <Button disabled className={`${btnClass} cursor-not-allowed`} style={{ backgroundColor: THEME.panel, color: THEME.muted, border: `2px solid ${THEME.border}` }}>
+          <Loader2 className="size-4 mr-2 animate-spin" />MENGIRIM...
+        </Button>
+      )
+    }
+
+    return null
+  }
+
+  // ── Queue list (shared) ──────────────────────────────────────────────────
+  const renderQueueList = (compact = false) => (
+    <Card
+      className={`${compact ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} border rounded-lg overflow-hidden flex flex-col`}
+      style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+    >
+      <div
+        className="shrink-0 flex items-center justify-between px-3 py-2"
+        style={{ borderBottom: `1px solid ${THEME.border}` }}
+      >
+        <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+          Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
+        </h3>
+        <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+      </div>
+
+      {/* Column headers — hide on very compact view */}
+      {!compact && (
+        <div
+          className="shrink-0 grid grid-cols-[24px_60px_1fr_60px] gap-0.5 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider"
+          style={{ backgroundColor: THEME.panel, color: THEME.muted, borderBottom: `1px solid ${THEME.border}` }}
+        >
+          <span>No</span><span>NIM</span><span>Nama</span><span className="text-right">Status</span>
+        </div>
+      )}
+
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="flex flex-col">
+          {channelStudents.length === 0 ? (
+            <div className="flex items-center justify-center py-8">
+              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada mahasiswa</p>
+            </div>
+          ) : (
+            channelStudents.map((student, idx) => {
+              const isActive = student.status === `active_${myChannel}`
+              const isNext = student.id === nextPending?.id && student.status === 'pending'
+
+              if (compact) {
+                // Mobile compact: only show name + status
+                return (
+                  <div
+                    key={student.id}
+                    ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+                    className="flex items-center gap-2 px-3 py-1.5 transition-colors duration-200"
+                    style={getRowStyle(student)}
+                  >
+                    <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>{idx + 1}</span>
+                    <span className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+                      {student.nama}
+                    </span>
+                    <div className="shrink-0">{renderStatusBadge(student.status)}</div>
+                  </div>
+                )
+              }
+
+              return (
+                <div
+                  key={student.id}
+                  ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+                  className="grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200"
+                  style={getRowStyle(student)}
+                >
+                  <span className="text-[9px] font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
+                  <span className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
+                  <span className={`text-[10px] font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
+                    {student.nama}
+                  </span>
+                  <div className="flex justify-end">{renderStatusBadge(student.status)}</div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </ScrollArea>
+    </Card>
+  )
+
   // ── Main render ──────────────────────────────────────────────────────────
   if (!currentProject) {
     return (
@@ -692,218 +838,157 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
+  // ── MOBILE LAYOUT ────────────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full touch-no-select" style={{ backgroundColor: THEME.bg }}>
+
+        {/* ── Camera Zone (takes most of the screen) ─────────────────────── */}
+        <div
+          ref={cameraZoneRef}
+          className="flex-1 flex items-center justify-center min-h-0 p-1"
+        >
+          {renderCameraView()}
+        </div>
+
+        {/* ── Bottom Control Bar ──────────────────────────────────────────── */}
+        <div
+          className="shrink-0 border-t safe-bottom"
+          style={{
+            backgroundColor: `${THEME.panel}ee`,
+            borderColor: THEME.border,
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          {/* Target info row */}
+          <div className="flex items-center gap-2 px-3 py-2">
+            {/* Avatar */}
+            <div
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2"
+              style={{
+                backgroundColor: THEME.bg,
+                borderColor: hasActiveTarget ? THEME.gold : THEME.border,
+              }}
+            >
+              <User className="size-3.5" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
+            </div>
+
+            {/* Name & NIM */}
+            <div className="flex-1 min-w-0">
+              {hasActiveTarget ? (
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                      {opCurrentTarget.nama}
+                    </p>
+                    <p className="text-[10px] font-mono" style={{ color: THEME.muted }}>
+                      {opCurrentTarget.nim}
+                    </p>
+                  </div>
+                  <Badge
+                    className={`text-[9px] px-1.5 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
+                    style={{
+                      backgroundColor:
+                        capturePhase === 'ready-1' ? `${THEME.gold}33`
+                          : capturePhase === 'ready-2' ? '#22c55e33'
+                            : capturePhase === 'sending' ? `${THEME.border}66`
+                              : `${THEME.border}44`,
+                      color:
+                        capturePhase === 'ready-1' ? THEME.gold
+                          : capturePhase === 'ready-2' ? '#4ade80'
+                            : THEME.muted,
+                      border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
+                    }}
+                  >
+                    {capturePhase === 'sending' && <Loader2 className="size-2.5 mr-0.5 animate-spin" />}
+                    {capturePhase === 'ready-1' && <Camera className="size-2.5 mr-0.5" />}
+                    {capturePhase === 'ready-2' && <CheckCircle2 className="size-2.5 mr-0.5" />}
+                    {capturePhase === 'standby' && <Clock className="size-2.5 mr-0.5" />}
+                    {progressText}
+                  </Badge>
+                </div>
+              ) : (
+                <p className="text-xs italic" style={{ color: THEME.muted }}>
+                  Menunggu panggilan MC...
+                </p>
+              )}
+            </div>
+
+            {/* Queue toggle button */}
+            <button
+              onClick={() => setShowQueueOnMobile(!showQueueOnMobile)}
+              className="shrink-0 flex items-center justify-center w-9 h-9 rounded-lg border cursor-pointer active:scale-95 transition-transform"
+              style={{
+                backgroundColor: showQueueOnMobile ? THEME.gold : THEME.card,
+                borderColor: showQueueOnMobile ? THEME.gold : THEME.border,
+              }}
+              title="Lihat antrean"
+            >
+              {showQueueOnMobile ? (
+                <X className="size-4" style={{ color: showQueueOnMobile ? THEME.bg : THEME.muted }} />
+              ) : (
+                <List className="size-4" style={{ color: THEME.muted }} />
+              )}
+            </button>
+          </div>
+
+          {/* Queue list (expandable) */}
+          {showQueueOnMobile && (
+            <div
+              className="border-t"
+              style={{ borderColor: THEME.border, maxHeight: '35vh' }}
+            >
+              {renderQueueList(true)}
+            </div>
+          )}
+
+          {/* Camera selector (compact) */}
+          {videoDevices.length > 1 && (
+            <div className="px-3 py-1">
+              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                <SelectTrigger
+                  className="flex-1 text-[10px] h-7"
+                  style={{ backgroundColor: THEME.bg, borderColor: THEME.border, color: THEME.muted }}
+                >
+                  <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
+                  <SelectValue placeholder="Pilih Kamera" />
+                </SelectTrigger>
+                <SelectContent style={{ backgroundColor: THEME.panel, borderColor: THEME.border }}>
+                  {videoDevices.map((dev) => (
+                    <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>
+                      {dev.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Capture button */}
+          <div className="px-3 pb-2 pt-1">
+            {renderCaptureButton('large')}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── DESKTOP LAYOUT (original with minor tweaks) ──────────────────────────
   return (
     <div className="flex h-full overflow-hidden" style={{ backgroundColor: THEME.bg }}>
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          CAMERA ZONE — Camera dictates aspect ratio, sizes to fit available
-          space. ResizeObserver calculates optimal dimensions.
-      ═══════════════════════════════════════════════════════════════════════ */}
+      {/* CAMERA ZONE */}
       <div
         ref={cameraZoneRef}
         className="flex-1 flex items-center justify-center h-full min-w-0 p-2"
       >
-        <div
-          className="relative rounded-xl overflow-hidden border-2"
-          style={{
-            width: cameraDims.width > 0 ? cameraDims.width : undefined,
-            height: cameraDims.height > 0 ? cameraDims.height : undefined,
-            borderColor: hasActiveTarget ? THEME.gold : THEME.border,
-            boxShadow: hasActiveTarget ? `0 0 16px ${THEME.gold}15` : 'none',
-            backgroundColor: '#000000',
-          }}
-        >
-          {/* Video — fills the container exactly matching aspect ratio */}
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{
-              filter: cssFilter !== 'none' ? cssFilter : undefined,
-            }}
-          />
-
-          {/* Frame overlay preview on camera */}
-          {frameData && (
-            <img
-              src={frameData}
-              alt="Frame overlay"
-              className="absolute inset-0 w-full h-full object-fill pointer-events-none"
-              style={{ zIndex: 5 }}
-            />
-          )}
-
-          {/* Rule of thirds grid overlay */}
-          <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 6 }}>
-            <div className="absolute top-0 bottom-0 left-[33.333%] w-px bg-white/[0.12]" />
-            <div className="absolute top-0 bottom-0 left-[66.666%] w-px bg-white/[0.12]" />
-            <div className="absolute left-0 right-0 top-[33.333%] h-px bg-white/[0.12]" />
-            <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
-          </div>
-
-          {/* AI Detection Overlay */}
-          {ai.isRunning && ai.momentState !== 'idle' && (
-            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 7 }}>
-              <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 rounded-md"
-                style={{
-                  backgroundColor: ai.momentState.includes('sustained') ? 'rgba(34,197,94,0.85)' : 'rgba(212,175,55,0.85)',
-                  color: '#1a0b2e',
-                }}>
-                <Sparkles className="size-3" />
-                <span className="text-[10px] font-bold uppercase">
-                  {ai.momentState === 'toga_possible' && 'Deteksi Toga...'}
-                  {ai.momentState === 'toga_sustained' && 'TOGA TERDETEKSI!'}
-                  {ai.momentState === 'ijazah_possible' && 'Deteksi Ijazah...'}
-                  {ai.momentState === 'ijazah_sustained' && 'IJAZAH TERDETEKSI!'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Flash overlay */}
-          <div
-            ref={flashRef}
-            className="absolute inset-0 transition-opacity duration-150 pointer-events-none"
-            style={{
-              backgroundColor: '#ffffff',
-              opacity: flashVisible ? 0.85 : 0,
-              zIndex: 20,
-            }}
-          />
-
-          {/* NO CAMERA SIGNAL / ERROR overlay */}
-          {!cameraAvailable && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 px-4 overflow-y-auto" style={{ zIndex: 8 }}>
-              {cameraError === 'insecure-context' ? (
-                <>
-                  <VideoOff className="size-12" style={{ color: '#ef4444' }} />
-                  <p className="text-sm font-bold tracking-wider text-red-400">
-                    KAMERA DIBLOKIR
-                  </p>
-                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
-                    Browser memblokir akses kamera karena koneksi tidak aman (HTTP).
-                    Aktifkan Chrome Flag untuk mengizinkan kamera.
-                  </p>
-
-                  {/* Chrome Flag method — the ONLY solution for HTTP LAN */}
-                  <div className="mt-2 rounded-lg p-3 max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.gold}66` }}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.gold }}>
-                      ✅ Langkah Mengaktifkan Chrome Flag
-                    </p>
-                    <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.muted }}>
-                      <li>1. Buka tab baru, ketik: <code className="px-1 rounded" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
-                      <li>2. Cari: <code className="px-1 rounded" style={{ backgroundColor: '#00000044' }}>insecure origin</code></li>
-                      <li>3. Pada &quot;Insecure origins treated as secure&quot;, masukkan:</li>
-                      <li className="pl-2"><code className="px-1 rounded break-all" style={{ backgroundColor: '#00000044', color: THEME.gold }}>{window.location.origin}</code></li>
-                      <li>4. Pilih &quot;Enabled&quot; → Klik &quot;Relaunch&quot;</li>
-                      <li>5. Buka kembali link operator — kamera akan aktif!</li>
-                    </ol>
-                  </div>
-
-                  <Button
-                    onClick={() => window.location.reload()}
-                    className="mt-2 text-xs h-8 px-4"
-                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-                  >
-                    Muat Ulang Halaman
-                  </Button>
-                </>
-              ) : cameraError === 'permission-denied' ? (
-                <>
-                  <VideoOff className="size-12" style={{ color: '#f59e0b' }} />
-                  <p className="text-sm font-bold tracking-wider text-amber-400">
-                    IZIN KAMERA DITOLAK
-                  </p>
-                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
-                    Klik ikon kamera/lock di address bar browser, lalu izinkan akses kamera, lalu muat ulang halaman.
-                  </p>
-                  <Button
-                    onClick={() => startCamera()}
-                    className="mt-2 text-xs h-8 px-4"
-                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-                  >
-                    Coba Lagi
-                  </Button>
-                </>
-              ) : cameraError === 'no-devices' ? (
-                <>
-                  <VideoOff className="size-12" style={{ color: THEME.border }} />
-                  <p className="text-sm font-bold tracking-wider" style={{ color: THEME.muted }}>
-                    TIDAK ADA KAMERA
-                  </p>
-                  <p className="text-xs text-center max-w-xs" style={{ color: THEME.border }}>
-                    Tidak ditemukan kamera. Pastikan kamera terhubung ke perangkat ini.
-                  </p>
-                  <Button
-                    onClick={() => startCamera()}
-                    className="mt-2 text-xs h-8 px-4"
-                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-                  >
-                    Coba Lagi
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <VideoOff className="size-12" style={{ color: THEME.border }} />
-                  <p className="text-sm font-semibold tracking-wider" style={{ color: THEME.muted }}>
-                    NO CAMERA SIGNAL
-                  </p>
-                  <p className="text-xs" style={{ color: THEME.border }}>
-                    Pastikan kamera terhubung dan izin diberikan
-                  </p>
-                  <Button
-                    onClick={() => startCamera()}
-                    className="mt-2 text-xs h-8 px-4"
-                    style={{ backgroundColor: THEME.gold, color: THEME.bg }}
-                  >
-                    Coba Lagi
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Aspect ratio & frame indicator badges */}
-          <div className="absolute top-2 left-2 flex gap-1.5" style={{ zIndex: 10 }}>
-            <Badge
-              className="text-[9px] px-1.5 py-0.5 border-0"
-              style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.muted }}
-            >
-              {config?.ratio ?? '4:3'}
-            </Badge>
-            {frameData && (
-              <Badge
-                className="text-[9px] px-1.5 py-0.5 border-0"
-                style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: THEME.gold }}
-              >
-                <Frame className="size-2.5 mr-0.5" />
-                Frame
-              </Badge>
-            )}
-            <NetworkQualityBadge />
-            {ai.isRunning && (
-              <Badge className="text-[9px] px-1.5 py-0.5 border-0 animate-pulse"
-                style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: '#22c55e' }}>
-                <Brain className="size-2.5 mr-0.5" />
-                AI {ai.posesDetected > 0 ? `(${ai.posesDetected})` : ''}
-              </Badge>
-            )}
-          </div>
-
-          {/* Hidden canvas for photo capture */}
-          <canvas ref={canvasRef} className="hidden" />
-        </div>
+        {renderCameraView()}
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          SIDEBAR — Fixed width, adapts vertically to fit alongside camera.
-          Target info, Queue list, Capture button.
-      ═══════════════════════════════════════════════════════════════════════ */}
+      {/* SIDEBAR */}
       <div className="flex flex-col gap-2 p-2 w-[300px] shrink-0 min-h-0">
 
-        {/* ── Target Info Panel (compact) ────────────────────────────────── */}
+        {/* Target Info Panel */}
         <Card
           className="shrink-0 border-2 rounded-lg transition-all duration-300"
           style={{
@@ -915,53 +1000,30 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         >
           <CardContent className="p-2.5">
             <div className="flex items-center gap-2.5">
-              {/* Avatar */}
               <div
                 className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full border-2"
-                style={{
-                  backgroundColor: THEME.panel,
-                  borderColor: hasActiveTarget ? THEME.gold : THEME.border,
-                }}
+                style={{ backgroundColor: THEME.panel, borderColor: hasActiveTarget ? THEME.gold : THEME.border }}
               >
                 <User className="size-4" style={{ color: hasActiveTarget ? THEME.gold : THEME.border }} />
               </div>
 
-              {/* Name & NIM */}
               <div className="flex-1 min-w-0">
                 {hasActiveTarget ? (
                   <>
-                    <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
-                      {opCurrentTarget.nama}
-                    </p>
-                    <p className="text-[11px] font-mono" style={{ color: THEME.muted }}>
-                      {opCurrentTarget.nim}
-                    </p>
+                    <p className="text-sm font-bold leading-tight truncate" style={{ color: '#ffffff' }}>{opCurrentTarget.nama}</p>
+                    <p className="text-[11px] font-mono" style={{ color: THEME.muted }}>{opCurrentTarget.nim}</p>
                   </>
                 ) : (
-                  <p className="text-xs italic" style={{ color: THEME.muted }}>
-                    Menunggu panggilan MC...
-                  </p>
+                  <p className="text-xs italic" style={{ color: THEME.muted }}>Menunggu panggilan MC...</p>
                 )}
               </div>
 
-              {/* Progress Badge */}
               <Badge
                 className={`text-[10px] px-2 py-0.5 shrink-0 ${hasActiveTarget && !sending ? 'animate-pulse' : ''}`}
                 style={{
-                  backgroundColor:
-                    capturePhase === 'ready-1' ? `${THEME.gold}33`
-                      : capturePhase === 'ready-2' ? '#22c55e33'
-                        : capturePhase === 'sending' ? `${THEME.border}66`
-                          : `${THEME.border}44`,
-                  color:
-                    capturePhase === 'ready-1' ? THEME.gold
-                      : capturePhase === 'ready-2' ? '#4ade80'
-                        : THEME.muted,
-                  border: `1px solid ${
-                    capturePhase === 'ready-1' ? `${THEME.gold}66`
-                      : capturePhase === 'ready-2' ? '#22c55e66'
-                        : THEME.border
-                  }`,
+                  backgroundColor: capturePhase === 'ready-1' ? `${THEME.gold}33` : capturePhase === 'ready-2' ? '#22c55e33' : capturePhase === 'sending' ? `${THEME.border}66` : `${THEME.border}44`,
+                  color: capturePhase === 'ready-1' ? THEME.gold : capturePhase === 'ready-2' ? '#4ade80' : THEME.muted,
+                  border: `1px solid ${capturePhase === 'ready-1' ? `${THEME.gold}66` : capturePhase === 'ready-2' ? '#22c55e66' : THEME.border}`,
                 }}
               >
                 {capturePhase === 'sending' && <Loader2 className="size-3 mr-0.5 animate-spin" />}
@@ -972,17 +1034,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               </Badge>
             </div>
 
-            {/* Camera selector row */}
             <div className="mt-2 flex items-center gap-2">
               <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
-                <SelectTrigger
-                  className="flex-1 text-[11px] h-7"
-                  style={{
-                    backgroundColor: THEME.panel,
-                    borderColor: THEME.border,
-                    color: THEME.muted,
-                  }}
-                >
+                <SelectTrigger className="flex-1 text-[11px] h-7" style={{ backgroundColor: THEME.panel, borderColor: THEME.border, color: THEME.muted }}>
                   <Video className="size-3 mr-1 shrink-0" style={{ color: THEME.gold }} />
                   <SelectValue placeholder="Pilih Kamera" />
                 </SelectTrigger>
@@ -991,9 +1045,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                     <SelectItem value="__none" disabled>Tidak ada kamera</SelectItem>
                   ) : (
                     videoDevices.map((dev) => (
-                      <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>
-                        {dev.label}
-                      </SelectItem>
+                      <SelectItem key={dev.deviceId} value={dev.deviceId} style={{ color: '#ffffff' }}>{dev.label}</SelectItem>
                     ))
                   )}
                 </SelectContent>
@@ -1002,221 +1054,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           </CardContent>
         </Card>
 
-        {/* ── Queue List ────────────────────────────────────────────────── */}
-        <Card
-          className="flex-1 min-h-0 border rounded-lg overflow-hidden flex flex-col"
-          style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
-        >
-          {/* Header */}
-          <div
-            className="shrink-0 flex items-center justify-between px-3 py-2"
-            style={{ borderBottom: `1px solid ${THEME.border}` }}
-          >
-            <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
-              Antrean:{' '}
-              <span style={{ color: THEME.gold }} className="font-bold">
-                {remainingCount}
-              </span>
-            </h3>
-            <span className="text-[10px]" style={{ color: THEME.muted }}>
-              Ch.{myChannel}
-            </span>
-          </div>
+        {/* Queue List */}
+        {renderQueueList(false)}
 
-          {/* Column headers */}
-          <div
-            className="shrink-0 grid grid-cols-[24px_60px_1fr_60px] gap-0.5 px-2 py-1 text-[8px] font-semibold uppercase tracking-wider"
-            style={{
-              backgroundColor: THEME.panel,
-              color: THEME.muted,
-              borderBottom: `1px solid ${THEME.border}`,
-            }}
-          >
-            <span>No</span>
-            <span>NIM</span>
-            <span>Nama</span>
-            <span className="text-right">Status</span>
-          </div>
-
-          {/* Scrollable rows */}
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="flex flex-col">
-              {channelStudents.length === 0 ? (
-                <div className="flex items-center justify-center py-8">
-                  <p className="text-xs" style={{ color: THEME.muted }}>
-                    Tidak ada mahasiswa
-                  </p>
-                </div>
-              ) : (
-                channelStudents.map((student, idx) => {
-                  const isActive = student.status === `active_${myChannel}`
-                  const isNext = student.id === nextPending?.id && student.status === 'pending'
-
-                  return (
-                    <div
-                      key={student.id}
-                      ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                      className="grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200"
-                      style={getRowStyle(student)}
-                    >
-                      <span className="text-[9px] font-mono" style={{ color: THEME.muted }}>
-                        {idx + 1}
-                      </span>
-                      <span className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>
-                        {student.nim}
-                      </span>
-                      <span
-                        className={`text-[10px] font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
-                        style={{
-                          color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff',
-                        }}
-                      >
-                        {student.nama}
-                      </span>
-                      <div className="flex justify-end">
-                        {renderStatusBadge(student.status)}
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </ScrollArea>
-        </Card>
-
-        {/* ── AI Auto-Capture Control ────────────────────────────────────── */}
-        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: ai.isRunning ? '#22c55e55' : THEME.border }}>
-          <CardContent className="p-2">
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5">
-                <Brain className="size-3.5" style={{ color: ai.isRunning ? '#22c55e' : THEME.border }} />
-                <span className="text-[11px] font-semibold" style={{ color: ai.isRunning ? '#22c55e' : THEME.muted }}>
-                  AI Auto-Capture
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className={`h-6 px-2 text-[10px] ${aiAutoCapture ? 'bg-emerald-500/20 text-emerald-400' : ''}`}
-                style={{
-                  border: `1px solid ${aiAutoCapture ? '#22c55e55' : THEME.border}`,
-                  color: aiAutoCapture ? '#22c55e' : THEME.muted,
-                }}
-                onClick={() => {
-                  if (!aiAutoCapture && !ai.modelLoaded) {
-                    ai.initialize().then((ok) => { if (ok) setAiAutoCapture(true) })
-                  } else {
-                    setAiAutoCapture(!aiAutoCapture)
-                  }
-                }}
-                disabled={ai.status === 'loading_scripts' || ai.status === 'loading_model'}
-              >
-                {ai.status === 'loading_scripts' || ai.status === 'loading_model' ? (
-                  <><Loader2 className="size-3 mr-1 animate-spin" />Loading...</>
-                ) : aiAutoCapture ? (
-                  <><Zap className="size-3 mr-1" />Aktif</>
-                ) : (
-                  <><Sparkles className="size-3 mr-1" />Mulai</>
-                )}
-              </Button>
-            </div>
-            {ai.error && (
-              <p className="text-[9px] text-red-400 mb-1">{ai.error}</p>
-            )}
-            {ai.isRunning && (
-              <div className="flex items-center gap-1 text-[9px]" style={{ color: THEME.muted }}>
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Mendeteksi {ai.posesDetected} orang</span>
-              </div>
-            )}
-            {ai.status === 'model_ready' && !aiAutoCapture && (
-              <p className="text-[9px]" style={{ color: THEME.muted }}>Model siap — klik Mulai</p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ── Capture Button ────────────────────────────────────────────── */}
+        {/* Capture Button */}
         <div className="shrink-0">
-          {readOnly ? (
-            <Button
-              disabled
-              className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
-              style={{
-                backgroundColor: THEME.panel,
-                color: THEME.muted,
-                border: `2px solid ${THEME.border}`,
-                opacity: 0.6,
-              }}
-            >
-              <Monitor className="size-4 mr-2" />
-              MODE MONITOR — HANYA LIHAT
-            </Button>
-          ) : (
-            <>
-              {capturePhase === 'standby' && (
-                <Button
-                  disabled
-                  className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
-                  style={{
-                    backgroundColor: THEME.panel,
-                    color: THEME.muted,
-                    border: `2px solid ${THEME.border}`,
-                    opacity: 0.6,
-                  }}
-                >
-                  <Aperture className="size-4 mr-2" />
-                  STANDBY
-                </Button>
-              )}
-
-              {capturePhase === 'ready-1' && (
-                <Button
-                  onClick={handleCapture}
-                  className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-                  style={{
-                    backgroundColor: THEME.gold,
-                    color: THEME.bg,
-                    border: `2px solid ${THEME.gold}`,
-                    boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22`,
-                  }}
-                >
-                  <Camera className="size-4 mr-2" />
-                  1. JEPRET (TOGA)
-                </Button>
-              )}
-
-              {capturePhase === 'ready-2' && (
-                <Button
-                  onClick={handleCapture}
-                  className="w-full h-12 text-sm font-bold cursor-pointer rounded-lg transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
-                  style={{
-                    backgroundColor: '#22c55e',
-                    color: '#ffffff',
-                    border: `2px solid #22c55e`,
-                    boxShadow: `0 0 30px #22c55e44, 0 0 60px #22c55e22`,
-                  }}
-                >
-                  <Camera className="size-4 mr-2" />
-                  2. JEPRET (IJAZAH)
-                </Button>
-              )}
-
-              {capturePhase === 'sending' && (
-                <Button
-                  disabled
-                  className="w-full h-12 text-sm font-bold cursor-not-allowed rounded-lg"
-                  style={{
-                    backgroundColor: THEME.panel,
-                    color: THEME.muted,
-                    border: `2px solid ${THEME.border}`,
-                  }}
-                >
-                  <Loader2 className="size-4 mr-2 animate-spin" />
-                  MENGIRIM...
-                </Button>
-              )}
-            </>
-          )}
+          {renderCaptureButton('normal')}
         </div>
       </div>
     </div>

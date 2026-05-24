@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, type ProjectConfig, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -77,7 +77,6 @@ export function MainApp() {
   const setCurrentScreen = useSaatirilStore((s) => s.setCurrentScreen)
   const setCurrentTab = useSaatirilStore((s) => s.setCurrentTab)
   const loadProjectsFromStorage = useSaatirilStore((s) => s.loadProjectsFromStorage)
-  const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [serverConnected, setServerConnected] = useState(false)
@@ -134,13 +133,13 @@ export function MainApp() {
     }
   }, [])
 
-  // ── Detect HTTP port for LAN access ────────────────────────────────────
+  // ── Detect HTTP port for LAN access ───────────────────────────────────────
   const [httpPort, setHttpPort] = useState(3000)
 
   useEffect(() => {
     const api = window.saatirilAPI
     if (api?.isElectron && api.getLanInfo) {
-      api.getLanInfo().then((info: { httpPort: number; socketPort: number }) => {
+      api.getLanInfo().then((info: { httpPort: number }) => {
         setHttpPort(info.httpPort)
       }).catch(() => {})
     }
@@ -149,7 +148,6 @@ export function MainApp() {
   // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
-    // Always HTTP — Operator needs Chrome Flag for camera
     navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
     setCopiedIP(true)
     setTimeout(() => setCopiedIP(false), 2000)
@@ -231,9 +229,6 @@ export function MainApp() {
       const curProj = currentProjectRef.current
 
       if (role !== 'admin' && data.project) {
-        // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
-        const mergedConfig = preserveFrameOnSync(data.project.config, curProj?.config)
-
         // For MC/Operator: merge incoming database with local (prevents data regression)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
@@ -241,21 +236,11 @@ export function MainApp() {
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
-            config: mergedConfig,
           })
         } else {
-          // First project received — use full data including frame (if present)
-          updateCurrentProject({
-            ...data.project,
-            config: mergedConfig,
-          })
+          updateCurrentProject(data.project)
         }
-        // Persist to localStorage so MC/Operator can recover on page refresh
-        saveProjectsToStorageNow()
       } else if (role === 'admin' && data.project) {
-        // Preserve frame data for admin too (in case it was stripped by another client)
-        const mergedConfig = preserveFrameOnSync(data.project.config, curProj?.config)
-
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
         if (curProj && data.project.id === curProj.id) {
           const mergedDb = mergeDatabases(curProj.database, data.project.database)
@@ -263,7 +248,6 @@ export function MainApp() {
             ...curProj,
             database: mergedDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
-            config: mergedConfig,
           })
         }
       }
@@ -273,13 +257,7 @@ export function MainApp() {
       const role = myRoleRef.current
       const curProj = currentProjectRef.current
       if (role === 'admin' && curProj) {
-        // CRITICAL: Send FULL project WITH frame data for initial state requests.
-        // New clients (MC/Operator) need the frame data for:
-        //   1. Camera overlay reference on Operator panel
-        //   2. Frame overlay on captured photos
-        // Without frame data, photos are captured without the frame overlay.
-        emitLocal('SYNC_DB', { project: curProj })
-        console.log('[SAATIRIL] Admin responded to REQUEST_STATE — sent full project with frame')
+        emitLocal('SYNC_DB', { project: stripFrameForSync(curProj) })
       }
     }
 
@@ -290,7 +268,7 @@ export function MainApp() {
       offLocal('SYNC_DB', handleSyncDb)
       offLocal('REQUEST_STATE', handleRequestState)
     }
-  }, [updateCurrentProject, saveProjectsToStorageNow])
+  }, [updateCurrentProject])
 
   // ── Non-admin: load localStorage + request state from admin ────────────────
   useEffect(() => {
@@ -298,13 +276,6 @@ export function MainApp() {
 
     // Try to recover project from localStorage first (for reconnection/recovery)
     loadProjectsFromStorage()
-
-    // Recover currentProject from localStorage (for page refresh when admin is offline)
-    const store = useSaatirilStore.getState()
-    if (!store.currentProject && store.projects.length > 0) {
-      store.setCurrentProject(store.projects[0])
-      console.log('[SAATIRIL] MainApp: Recovered currentProject from localStorage for', myRole)
-    }
 
     // Request state from admin via socket
     emitLocal('REQUEST_STATE', { role: myRole, channel: myChannel })
@@ -394,7 +365,7 @@ export function MainApp() {
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen flex-col" style={{ backgroundColor: THEME.bg }}>
+    <div className="flex h-dvh flex-col" style={{ backgroundColor: THEME.bg }}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header
         className="shrink-0 border-b backdrop-blur-sm z-20"
@@ -405,19 +376,17 @@ export function MainApp() {
       >
         <div className="flex flex-col gap-0">
           {/* Top row: back, project name, badge, server status */}
-          <div className="flex items-center gap-3 px-4 py-2.5 sm:gap-4 sm:px-6">
-            {/* Back button — only for Admin (MC/Operator should never navigate back to hub) */}
-            {myRole === 'admin' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleBack}
-                className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
-                aria-label="Kembali ke hub"
-              >
-                <ArrowLeft className="size-5" />
-              </Button>
-            )}
+          <div className="flex items-center gap-2 px-2 py-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6">
+            {/* Back button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleBack}
+              className="shrink-0 text-[#c4b5fd] hover:bg-white/10 hover:text-[#d4af37]"
+              aria-label="Kembali ke hub"
+            >
+              <ArrowLeft className="size-5" />
+            </Button>
 
             {/* Project name */}
             <div className="min-w-0 flex-1">
@@ -426,9 +395,9 @@ export function MainApp() {
               </h1>
             </div>
 
-            {/* Mode badge */}
+            {/* Mode badge — shorter on mobile */}
             <Badge
-              className="shrink-0 gap-1.5 border-none px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider sm:text-xs"
+              className="shrink-0 gap-1 border-none px-2 py-1 text-[9px] font-semibold uppercase tracking-wider sm:text-[10px] md:text-xs md:gap-1.5 md:px-2.5"
               style={{
                 backgroundColor: myRole === 'admin' ? `${THEME.gold}22` : myRole === 'mc' ? `${THEME.gold}22` : `${THEME.cyan}22`,
                 color: myRole === 'operator' ? THEME.cyan : THEME.gold,
@@ -437,13 +406,14 @@ export function MainApp() {
               {myRole === 'admin' && <LayoutDashboard className="size-3" />}
               {myRole === 'mc' && <Megaphone className="size-3" />}
               {myRole === 'operator' && <Camera className="size-3" />}
-              {getModeBadgeText(myRole, myChannel)}
+              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel)}</span>
+              <span className="md:hidden">{myRole === 'admin' ? 'Admin' : myRole === 'mc' ? `MC-${myChannel}` : `Op-${myChannel}`}</span>
             </Badge>
 
-            {/* Channel indicator (MC/Operator only) */}
+            {/* Channel indicator (MC/Operator only) — hidden on mobile since badge shows it */}
             {myRole !== 'admin' && (
               <Badge
-                className="shrink-0 gap-1 border-none px-2 py-0.5 text-[10px] font-bold sm:text-xs"
+                className="hidden sm:flex shrink-0 gap-1 border-none px-2 py-0.5 text-[10px] font-bold md:text-xs"
                 style={{
                   backgroundColor: myChannel === 1 ? `${THEME.gold}22` : `${THEME.cyan}22`,
                   color: myChannel === 1 ? THEME.gold : THEME.cyan,
@@ -454,16 +424,16 @@ export function MainApp() {
               </Badge>
             )}
 
-            {/* LAN IP indicator — shows IP for other devices to connect */}
+            {/* LAN IP indicator — hidden on mobile to save space */}
             {lanIP && (
               <button
                 onClick={handleCopyIP}
-                className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
+                className="hidden sm:flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer"
                 title="Klik untuk salin alamat LAN"
               >
                 <Wifi className="size-3" style={{ color: THEME.gold }} />
                 <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
-                  http://{lanIP}:{httpPort}
+                  {lanIP}:{httpPort}
                 </span>
                 {copiedIP ? (
                   <Check className="size-3" style={{ color: '#22c55e' }} />
@@ -493,9 +463,9 @@ export function MainApp() {
             </div>
           </div>
 
-          {/* Tab navigation (admin only) */}
+          {/* Tab navigation (admin only) — compact on mobile */}
           {myRole === 'admin' && (
-            <div className="flex items-center gap-1 border-t px-4 py-1 sm:px-6" style={{ borderColor: `${THEME.border}66` }}>
+            <div className="flex items-center gap-1 border-t px-2 py-1 sm:px-4 md:px-6" style={{ borderColor: `${THEME.border}66` }}>
               {TABS.map((tab) => {
                 const isActive = effectiveTab === tab.id
                 return (
@@ -583,7 +553,8 @@ export function MainApp() {
         </div>
       </main>
 
-      {/* ── Footer (sticky to bottom) ───────────────────────────────────────── */}
+      {/* ── Footer (sticky to bottom) — hidden on mobile Operator/MC to save space */}
+      {!(myRole !== 'admin') && (
       <footer
         className="shrink-0 border-t"
         style={{
@@ -591,15 +562,16 @@ export function MainApp() {
           borderColor: `${THEME.border}44`,
         }}
       >
-        <div className="px-4 py-2 sm:px-6">
+        <div className="px-4 py-1.5 sm:px-6 sm:py-2">
           <p
-            className="text-center font-mono text-[10px] tracking-widest sm:text-xs"
+            className="text-center font-mono text-[8px] tracking-widest sm:text-[10px] md:text-xs"
             style={{ color: `${THEME.muted}66` }}
           >
-            Saatiril - Made by Fajrianor - Pusat Humas dan Keterbukaan Informasi 2026
+            Saatiril — Pusat Humas & KI 2026
           </p>
         </div>
       </footer>
+      )}
     </div>
   )
 }

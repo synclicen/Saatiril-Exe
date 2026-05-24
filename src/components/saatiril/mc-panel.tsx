@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
-import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -68,22 +68,21 @@ interface OpProgressData {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
+  const isMobile = useIsMobile()
+
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const myChannel = useSaatirilStore((s) => s.myChannel)
   const updateStudentStatus = useSaatirilStore((s) => s.updateStudentStatus)
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
-  // ── Local UI state for operator progress ─────────────────────────────────
   const [opProgressText, setOpProgressText] = useState<string>('')
 
-  // ── Refs for stable event handlers ───────────────────────────────────────
   const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
   useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
-  // ── Derived data ────────────────────────────────────────────────────────
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
@@ -104,7 +103,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const isPhotographing = currentlyActive !== null
 
-  // ── Auto-scroll ref ─────────────────────────────────────────────────────
   const activeRowRef = useRef<HTMLDivElement>(null)
   const nextRowRef = useRef<HTMLDivElement>(null)
 
@@ -115,22 +113,18 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [currentlyActive, nextPending])
 
-  // ── Socket: SYNC_DB — update store with latest project data ────────────
+  // ── Socket: SYNC_DB
   useEffect(() => {
     const handleSyncDb = (data: SyncDbData) => {
       if (!data.project) return
       const proj = data.project
-      // Only update if this is the same project we're working on
       const curProj = currentProjectRef.current
       if (curProj && proj.id === curProj.id) {
         const mergedDb = mergeDatabases(curProj.database, proj.database)
-        // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
-        const mergedConfig = preserveFrameOnSync(proj.config, curProj.config)
         updateCurrentProject({
           ...curProj,
           database: mergedDb,
           photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
-          config: mergedConfig,
         })
       }
     }
@@ -139,7 +133,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('SYNC_DB', handleSyncDb) }
   }, [updateCurrentProject])
 
-  // ── Socket: PHOTOS_SAVED — operator finished capturing 2 photos ────────
+  // ── Socket: PHOTOS_SAVED
   useEffect(() => {
     const handlePhotosSaved = (data: PhotosSavedData) => {
       console.log('[SAATIRIL MC] PHOTOS_SAVED received:', data.student?.nama, 'channel:', data.channel, 'myChannel:', myChannelRef.current)
@@ -149,14 +143,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         return
       }
 
-      // Immediately mark student as 'done' in our local store
       updateStudentStatus(data.student.id, 'done')
       saveProjectsToStorageNow()
-
-      // Clear operator progress text — photos are done!
       setOpProgressText('')
 
-      // Also update the full project to sync photoHistory
       const curProj = currentProjectRef.current
       if (curProj) {
         const historyItem: PhotoHistoryItem = {
@@ -182,7 +172,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           photoHistory: newHistory,
         }
         updateCurrentProject(updatedProject)
-        console.log('[SAATIRIL MC] Project updated, student marked as done. Next pending should appear.')
+        console.log('[SAATIRIL MC] Project updated, student marked as done.')
       }
     }
 
@@ -190,7 +180,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('PHOTOS_SAVED', handlePhotosSaved) }
   }, [updateStudentStatus, updateCurrentProject, saveProjectsToStorageNow])
 
-  // ── Socket: OP_PROGRESS — operator is taking photos ────────────────────
+  // ── Socket: OP_PROGRESS
   useEffect(() => {
     const handleOpProgress = (data: OpProgressData) => {
       if (data.channel !== myChannelRef.current) return
@@ -202,11 +192,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('OP_PROGRESS', handleOpProgress) }
   }, [])
 
-  // ── Socket: MC_CALL — another MC called a student (multi-channel) ──────
+  // ── Socket: MC_CALL
   useEffect(() => {
     const handleMcCall = (data: { student: Student; channel: number }) => {
       if (data.channel !== myChannelRef.current) return
-      // Another client called a student on our channel — update our store
       updateStudentStatus(data.student.id, data.student.status)
     }
 
@@ -214,19 +203,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return () => { offLocal('MC_CALL', handleMcCall) }
   }, [updateStudentStatus])
 
-  // ── Call action ─────────────────────────────────────────────────────────
+  // ── Call action
   const handleCallNow = useCallback(() => {
     if (!nextPending || !currentProject) return
 
     const newStatus: StudentStatus = `active_${myChannel}`
-
-    // 1. Update student status in store
     updateStudentStatus(nextPending.id, newStatus)
-
-    // 2. Persist immediately
     saveProjectsToStorageNow()
 
-    // 3. Read LATEST store state (not stale closure) to construct sync data
     const latestProject = useSaatirilStore.getState().currentProject
     if (!latestProject) return
 
@@ -237,8 +221,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       ),
     }
     updateCurrentProject(updatedProject)
-
-    // Clear any stale progress text
     setOpProgressText('')
 
     emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
@@ -255,13 +237,13 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     saveProjectsToStorageNow,
   ])
 
-  // ── Render helpers ──────────────────────────────────────────────────────
+  // ── Render helpers
   const renderCallButton = () => {
     if (readOnly) {
       return (
         <Button
           disabled
-          className="w-full h-14 text-lg font-bold cursor-not-allowed"
+          className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
           style={{
             backgroundColor: THEME.panel,
             color: THEME.muted,
@@ -270,7 +252,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           }}
         >
           <Monitor className="size-5" />
-          MODE MONITOR — HANYA LIHAT
+          MONITOR — HANYA LIHAT
         </Button>
       )
     }
@@ -279,7 +261,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       return (
         <Button
           disabled
-          className="w-full h-14 text-lg font-bold cursor-not-allowed"
+          className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
           style={{
             backgroundColor: THEME.panel,
             color: THEME.muted,
@@ -296,11 +278,12 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       return (
         <Button
           onClick={handleCallNow}
-          className="w-full h-14 text-lg font-bold cursor-pointer transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+          className={`w-full font-bold cursor-pointer transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-14 text-base' : 'h-14 text-lg hover:scale-[1.02]'}`}
           style={{
             backgroundColor: THEME.gold,
             color: THEME.bg,
             border: `2px solid ${THEME.gold}`,
+            boxShadow: `0 0 20px ${THEME.gold}44`,
           }}
         >
           <Megaphone className="size-5" />
@@ -312,7 +295,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     return (
       <Button
         disabled
-        className="w-full h-14 text-lg font-bold cursor-not-allowed"
+        className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
         style={{
           backgroundColor: THEME.panel,
           color: THEME.muted,
@@ -404,7 +387,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
-  // ── Main render ─────────────────────────────────────────────────────────
+  // ── Main render
   if (!currentProject) {
     return (
       <div
@@ -416,9 +399,131 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     )
   }
 
+  // ── MOBILE LAYOUT ────────────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div className="flex flex-col gap-2 h-full p-2 touch-no-select" style={{ backgroundColor: THEME.bg }}>
+        {/* Call Panel */}
+        <Card
+          className="shrink-0 border-2 rounded-xl"
+          style={{
+            backgroundColor: THEME.card,
+            borderColor: THEME.gold,
+            boxShadow: `0 0 20px ${THEME.gold}22`,
+          }}
+        >
+          <CardContent className="p-3 space-y-2">
+            <p
+              className="text-[10px] font-semibold uppercase tracking-widest"
+              style={{ color: THEME.gold }}
+            >
+              Target Selanjutnya
+            </p>
+
+            {nextPending ? (
+              <div className="space-y-0.5">
+                <p className="text-xl font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                  {nextPending.nama}
+                </p>
+                <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+                  {nextPending.nim}
+                </p>
+              </div>
+            ) : currentlyActive ? (
+              <div className="space-y-0.5">
+                <p className="text-sm font-semibold leading-tight" style={{ color: THEME.gold }}>
+                  Sedang difoto:
+                </p>
+                <p className="text-xl font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                  {currentlyActive.nama}
+                </p>
+                <p className="text-sm font-mono" style={{ color: THEME.muted }}>
+                  {currentlyActive.nim}
+                </p>
+                {opProgressText && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Camera className="size-3.5" style={{ color: THEME.gold }} />
+                    <span className="text-xs font-medium" style={{ color: THEME.gold }}>
+                      {opProgressText}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm italic" style={{ color: THEME.muted }}>
+                Semua mahasiswa telah dipanggil
+              </p>
+            )}
+
+            {renderCallButton()}
+          </CardContent>
+        </Card>
+
+        {/* Queue List */}
+        <Card
+          className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
+          style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
+        >
+          <div
+            className="shrink-0 flex items-center justify-between px-3 py-2"
+            style={{ borderBottom: `1px solid ${THEME.border}` }}
+          >
+            <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
+              Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
+            </h3>
+            <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+          </div>
+
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="flex flex-col">
+              {channelStudents.length === 0 ? (
+                <div className="flex items-center justify-center py-8">
+                  <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada mahasiswa di channel ini</p>
+                </div>
+              ) : (
+                channelStudents.map((student, idx) => {
+                  const isActive = student.status === `active_${myChannel}`
+                  const isNext = student.id === nextPending?.id && student.status === 'pending'
+
+                  return (
+                    <div
+                      key={student.id}
+                      ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
+                      className="flex items-center gap-2 px-3 py-2 transition-colors duration-200"
+                      style={getRowStyle(student)}
+                    >
+                      <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>
+                        {idx + 1}
+                      </span>
+                      <span className="text-[10px] font-mono truncate w-16 shrink-0" style={{ color: THEME.muted }}>
+                        {student.nim}
+                      </span>
+                      <span
+                        className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`}
+                        style={{
+                          color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff',
+                        }}
+                      >
+                        {student.nama}
+                      </span>
+                      <div className="shrink-0">
+                        {renderStatusBadge(student.status)}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </ScrollArea>
+        </Card>
+      </div>
+    )
+  }
+
+  // ── DESKTOP LAYOUT (original)
   return (
     <div className="flex flex-col gap-3 h-full p-3" style={{ backgroundColor: THEME.bg }}>
-      {/* ── Top: Call Panel ──────────────────────────────────────────────── */}
+      {/* Top: Call Panel */}
       <Card
         className="shrink-0 border-2 rounded-xl"
         style={{
@@ -428,7 +533,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
         }}
       >
         <CardContent className="p-4 space-y-3">
-          {/* Label */}
           <p
             className="text-xs font-semibold uppercase tracking-widest"
             style={{ color: THEME.gold }}
@@ -436,7 +540,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             Target Pemanggilan Selanjutnya
           </p>
 
-          {/* Next student info */}
           {nextPending ? (
             <div className="space-y-1">
               <p className="text-2xl font-bold leading-tight" style={{ color: '#ffffff' }}>
@@ -457,7 +560,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
               <p className="text-sm font-mono" style={{ color: THEME.muted }}>
                 {currentlyActive.nim}
               </p>
-              {/* Show real-time operator progress */}
               {opProgressText && (
                 <div className="flex items-center gap-2 mt-1">
                   <Camera className="size-3.5" style={{ color: THEME.gold }} />
@@ -475,36 +577,25 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             </div>
           )}
 
-          {/* Call button */}
           {renderCallButton()}
         </CardContent>
       </Card>
 
-      {/* ── Bottom: Queue List ───────────────────────────────────────────── */}
+      {/* Bottom: Queue List */}
       <Card
         className="flex-1 min-h-0 border rounded-xl overflow-hidden flex flex-col"
         style={{ backgroundColor: THEME.card, borderColor: THEME.border }}
       >
-        {/* Header */}
         <div
           className="shrink-0 flex items-center justify-between px-4 py-2.5"
           style={{ borderBottom: `1px solid ${THEME.border}` }}
         >
           <h3 className="text-sm font-semibold" style={{ color: '#ffffff' }}>
-            Sisa Antrean:{' '}
-            <span style={{ color: THEME.gold }} className="font-bold">
-              {remainingCount}
-            </span>
+            Sisa Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
           </h3>
-          <div className="flex items-center gap-2">
-            <NetworkQualityBadge />
-            <span className="text-xs" style={{ color: THEME.muted }}>
-              Channel {myChannel}
-            </span>
-          </div>
+          <span className="text-xs" style={{ color: THEME.muted }}>Channel {myChannel}</span>
         </div>
 
-        {/* Column headers */}
         <div
           className="shrink-0 grid grid-cols-[36px_90px_1fr_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider"
           style={{
@@ -519,7 +610,6 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           <span className="text-right">Status</span>
         </div>
 
-        {/* Scrollable rows */}
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col">
             {channelStudents.length === 0 ? (
@@ -531,57 +621,24 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             ) : (
               channelStudents.map((student, idx) => {
                 const isActive = student.status === `active_${myChannel}`
-                const isNext =
-                  student.id === nextPending?.id && student.status === 'pending'
-                const isDone = student.status === 'done'
+                const isNext = student.id === nextPending?.id && student.status === 'pending'
 
                 return (
                   <div
                     key={student.id}
-                    ref={
-                      isActive
-                        ? activeRowRef
-                        : isNext
-                          ? nextRowRef
-                          : undefined
-                    }
+                    ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
                     className="grid grid-cols-[36px_90px_1fr_80px] gap-2 items-center px-4 py-2 transition-colors duration-200"
                     style={getRowStyle(student)}
                   >
-                    {/* Row number */}
+                    <span className="text-xs font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
+                    <span className="text-xs font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>
                     <span
-                      className="text-xs font-mono"
-                      style={{ color: THEME.muted }}
-                    >
-                      {idx + 1}
-                    </span>
-
-                    {/* NIM */}
-                    <span
-                      className="text-xs font-mono truncate"
-                      style={{ color: THEME.muted }}
-                    >
-                      {student.nim}
-                    </span>
-
-                    {/* Name */}
-                    <span
-                      className={`text-sm font-medium truncate ${isDone ? 'line-through' : ''}`}
-                      style={{
-                        color: isActive
-                          ? THEME.gold
-                          : isDone
-                            ? THEME.muted
-                            : '#ffffff',
-                      }}
+                      className={`text-sm font-medium truncate ${student.status === 'done' ? 'line-through' : ''}`}
+                      style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}
                     >
                       {student.nama}
                     </span>
-
-                    {/* Status */}
-                    <div className="flex justify-end">
-                      {renderStatusBadge(student.status)}
-                    </div>
+                    <div className="flex justify-end">{renderStatusBadge(student.status)}</div>
                   </div>
                 )
               })
