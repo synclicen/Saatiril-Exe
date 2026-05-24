@@ -134,18 +134,14 @@ export function MainApp() {
     }
   }, [])
 
-  // ── Detect HTTP/HTTPS ports for LAN access ────────────────────────────────
+  // ── Detect HTTP port for LAN access ────────────────────────────────────
   const [httpPort, setHttpPort] = useState(3000)
-  const [httpsPort, setHttpsPort] = useState(3001)
-  const [httpsAvailable, setHttpsAvailable] = useState(false)
 
   useEffect(() => {
     const api = window.saatirilAPI
     if (api?.isElectron && api.getLanInfo) {
-      api.getLanInfo().then((info: { httpPort: number; httpsPort: number; socketPort: number; httpsAvailable: boolean }) => {
+      api.getLanInfo().then((info: { httpPort: number; socketPort: number }) => {
         setHttpPort(info.httpPort)
-        setHttpsPort(info.httpsPort)
-        setHttpsAvailable(info.httpsAvailable)
       }).catch(() => {})
     }
   }, [])
@@ -153,7 +149,7 @@ export function MainApp() {
   // ── Copy IP to clipboard ───────────────────────────────────────────────────
   const handleCopyIP = useCallback(() => {
     if (!lanIP) return
-    // Default to HTTP for general sharing; HTTPS is for operator camera only
+    // Always HTTP — Operator needs Chrome Flag for camera
     navigator.clipboard.writeText(`http://${lanIP}:${httpPort}`)
     setCopiedIP(true)
     setTimeout(() => setCopiedIP(false), 2000)
@@ -446,11 +442,6 @@ export function MainApp() {
                 title="Klik untuk salin alamat LAN"
               >
                 <Wifi className="size-3" style={{ color: THEME.gold }} />
-                {httpsAvailable && (
-                  <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#22c55e33', color: '#4ade80' }}>
-                    HTTPS
-                  </span>
-                )}
                 <span className="text-[10px] font-mono font-medium" style={{ color: THEME.gold }}>
                   http://{lanIP}:{httpPort}
                 </span>

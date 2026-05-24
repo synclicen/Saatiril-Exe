@@ -44,15 +44,13 @@ export function getConnectionHealth(): ConnectionHealth {
  *    - Read socketPort from URL query parameter (passed by Electron main process)
  *    - Connect directly to localhost:PORT (always HTTP)
  *
- * 2. LAN device — MC on HTTP:
+ * 2. LAN device (MC or Operator):
  *    - socketPort is the HTTP Socket.io port (3003)
  *    - Connect via http://hostname:socketPort
+ *    - All connections use HTTP (no HTTPS server)
+ *    - Operator needs Chrome Flag for camera access
  *
- * 3. LAN device — Operator on HTTPS:
- *    - socketPort is the HTTPS port (3001) where HTTPS Socket.io also runs
- *    - Connect via https://hostname:socketPort
- *
- * 4. Web/sandbox mode (development):
+ * 3. Web/sandbox mode (development):
  *    - Use XTransformPort=3003 for Caddy gateway routing
  */
 function getSocketUrl(): string {
@@ -69,14 +67,10 @@ function getSocketUrl(): string {
     return `http://localhost:${port}`
   }
 
-  // LAN device: socketPort determines which server to connect to
+  // LAN device: always use HTTP to connect to Socket.io server
   if (socketPortParam) {
     const hostname = window.location.hostname
-    // Use the SAME scheme as the current page
-    // If operator is on HTTPS page, Socket.io must also be HTTPS (mixed content blocking)
-    // If MC is on HTTP page, Socket.io uses HTTP
-    const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
-    return `${scheme}://${hostname}:${socketPortParam}`
+    return `http://${hostname}:${socketPortParam}`
   }
 
   // Web/sandbox mode: use Caddy gateway with XTransformPort

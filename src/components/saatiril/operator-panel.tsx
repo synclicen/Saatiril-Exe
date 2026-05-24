@@ -711,12 +711,13 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                   </p>
                   <p className="text-xs text-center max-w-xs" style={{ color: THEME.muted }}>
                     Browser memblokir akses kamera karena koneksi tidak aman (HTTP).
+                    Aktifkan Chrome Flag untuk mengizinkan kamera.
                   </p>
 
-                  {/* Chrome Flag method — ALWAYS works */}
+                  {/* Chrome Flag method — the ONLY solution for HTTP LAN */}
                   <div className="mt-2 rounded-lg p-3 max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.gold}66` }}>
                     <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.gold }}>
-                      ✅ Cara 1: Chrome Flag (Paling Mudah)
+                      ✅ Langkah Mengaktifkan Chrome Flag
                     </p>
                     <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.muted }}>
                       <li>1. Buka tab baru, ketik: <code className="px-1 rounded" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
@@ -728,34 +729,12 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                     </ol>
                   </div>
 
-                  {/* HTTPS method — requires admin to have HTTPS active */}
-                  <div className="mt-2 rounded-lg p-3 max-w-xs" style={{ backgroundColor: `${THEME.panel}cc`, border: `1px solid ${THEME.border}` }}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.muted }}>
-                      Cara 2: Link HTTPS (Jika Tersedia)
-                    </p>
-                    <ol className="text-[10px] space-y-1 text-left" style={{ color: THEME.border }}>
-                      <li>1. Minta Admin menyalin link HTTPS dari panel LAN</li>
-                      <li>2. Buka link HTTPS di browser</li>
-                      <li>3. Klik &quot;Advanced&quot; → &quot;Proceed&quot; pada peringatan sertifikat</li>
-                    </ol>
-                  </div>
-
                   <Button
-                    onClick={() => {
-                      // Try to redirect to HTTPS version
-                      if (window.location.protocol === 'http:') {
-                        // Replace http: with https: and try port 3001
-                        const currentHost = window.location.hostname
-                        const currentParams = window.location.search
-                        window.location.href = `https://${currentHost}:3001/${currentParams}`
-                      } else {
-                        startCamera()
-                      }
-                    }}
+                    onClick={() => window.location.reload()}
                     className="mt-2 text-xs h-8 px-4"
                     style={{ backgroundColor: THEME.gold, color: THEME.bg }}
                   >
-                    Coba HTTPS
+                    Muat Ulang Halaman
                   </Button>
                 </>
               ) : cameraError === 'permission-denied' ? (

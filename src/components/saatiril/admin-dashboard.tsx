@@ -207,7 +207,7 @@ export default function AdminDashboard() {
   }, [updateCurrentProject])
 
   // ── LAN info state ────────────────────────────────────────────────
-  const [lanInfo, setLanInfo] = useState<{ httpPort: number; httpsPort: number; socketPort: number; httpsAvailable: boolean; ips: { name: string; address: string }[] } | null>(null)
+  const [lanInfo, setLanInfo] = useState<{ httpPort: number; socketPort: number; ips: { name: string; address: string }[] } | null>(null)
 
   useEffect(() => {
     const api = window.saatirilAPI
@@ -220,6 +220,7 @@ export default function AdminDashboard() {
   }, [])
 
   // ── Copy link handler ────────────────────────────────────────────
+  // All links use HTTP. Operator needs Chrome Flag for camera access.
   const copyLink = useCallback(
     async (role: string, channel: number) => {
       const api = window.saatirilAPI
@@ -231,22 +232,13 @@ export default function AdminDashboard() {
           const info = lanInfo || (await api.getLanInfo())
           const ips = info.ips
           const lanIP = ips.length > 0 ? ips[0].address : 'localhost'
-
-          // MC doesn't need camera → HTTP is fine and more reliable
-          // Operator needs camera → HTTPS if available, HTTP + Chrome flag if not
-          if (role === 'operator' && info.httpsAvailable) {
-            // Operator with HTTPS: use HTTPS port for camera access
-            url = `https://${lanIP}:${info.httpsPort}/?role=${role}&channel=${channel}&socketPort=${info.httpsPort}`
-          } else {
-            // MC or Operator without HTTPS: use HTTP
-            url = `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
-          }
+          // Always use HTTP — Operator needs Chrome Flag for camera
+          url = `http://${lanIP}:${info.httpPort}/?role=${role}&channel=${channel}&socketPort=${info.socketPort}`
         } catch {
           const hostname = window.location.hostname
           const params = new URLSearchParams(window.location.search)
           const socketPort = params.get('socketPort') || '3003'
-          const scheme = window.location.protocol === 'https:' ? 'https' : 'http'
-          url = `${scheme}://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
+          url = `http://${hostname}:3000/?role=${role}&channel=${channel}&socketPort=${socketPort}`
         }
       } else {
         url = `${window.location.origin}/?role=${role}&channel=${channel}`
@@ -390,7 +382,6 @@ export default function AdminDashboard() {
   // ── Render: LAN Access Distribution ──────────────────────────────
   const renderLanAccess = () => {
     const isElectron = !!(window as any).saatirilAPI?.isElectron
-    const httpsAvailable = lanInfo?.httpsAvailable ?? false
     const lanIP = lanInfo?.ips?.[0]?.address ?? ''
 
     return (
@@ -399,22 +390,23 @@ export default function AdminDashboard() {
         <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-wide text-[#c4b5fd]">
           <Wifi className="size-4" style={{ color: GOLD }} />
           LAN Access Distribution
-          {httpsAvailable && (
-            <Badge className="text-[8px] px-1.5 py-0.5 ml-1" style={{ backgroundColor: '#22c55e22', color: '#4ade80', border: '1px solid #22c55e44' }}>
-              🔒 HTTPS
-            </Badge>
-          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {httpsAvailable && (
-          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#22c55e15', border: '1px solid #22c55e33', color: '#86efac' }}>
-            ✅ HTTPS aktif — Kamera operator akan berfungsi. Operator perlu klik &quot;Advanced&quot; → &quot;Proceed&quot; saat peringatan sertifikat muncul di browser.
-          </div>
-        )}
-        {!httpsAvailable && isElectron && (
-          <div className="rounded-md p-2 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
-            ⚠️ HTTPS tidak aktif — Kamera operator perlu Chrome Flag. Instruksi: Buka <code className="px-1 rounded" style={{ backgroundColor: '#00000033' }}>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code> → tambah <code className="px-1 rounded" style={{ backgroundColor: '#00000033' }}>http://{lanIP || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code> → Enable → Relaunch
+        {/* Chrome Flag instruction for Operator */}
+        {isElectron && (
+          <div className="rounded-md p-3 text-xs" style={{ backgroundColor: '#f59e0b15', border: '1px solid #f59e0b33', color: '#fde68a' }}>
+            <p className="font-semibold mb-1.5" style={{ color: GOLD }}>⚠️ Instruksi untuk Operator Kamera:</p>
+            <p className="mb-1.5">Browser memblokir kamera pada koneksi HTTP. Operator harus mengaktifkan Chrome Flag:</p>
+            <ol className="space-y-0.5 pl-1">
+              <li>1. Buka tab baru, ketik: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>chrome://flags</code></li>
+              <li>2. Cari: <code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044' }}>insecure origin</code></li>
+              <li>3. Pada &quot;Insecure origins treated as secure&quot;, masukkan:</li>
+              <li className="pl-4"><code className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: '#00000044', color: GOLD }}>http://{lanIP || '192.168.x.x'}:{lanInfo?.httpPort ?? 3000}</code></li>
+              <li>4. Pilih &quot;Enabled&quot; → Klik &quot;Relaunch&quot;</li>
+              <li>5. Buka kembali link operator — kamera akan aktif!</li>
+            </ol>
+            <p className="mt-1.5 opacity-70">MC tidak perlu Chrome Flag (tidak butuh kamera).</p>
           </div>
         )}
         {mode === 'single' ? (
