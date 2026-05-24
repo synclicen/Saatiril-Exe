@@ -29,6 +29,9 @@ import {
   VideoOff,
   Aperture,
   Frame,
+  Brain,
+  Sparkles,
+  Zap,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -41,6 +44,7 @@ import {
 } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -192,6 +196,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
   const isCapturingRef = useRef(false) // Guard against rapid capture clicks
+
+  // ── AI auto-capture ──────────────────────────────────────────────────────
+  const ai = useAIDetection()
+  const [aiAutoCapture, setAiAutoCapture] = useState(false)
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -617,6 +625,38 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     }
   }, [opCurrentTarget, capturePhase, aspectRatio, cssFilter, frameData, finalizeCapture])
 
+  // ── AI: stable refs for callback ─────────────────────────────────────────
+  const capturePhaseRef = useRef(capturePhase)
+  useEffect(() => { capturePhaseRef.current = capturePhase }, [capturePhase])
+  const handleCaptureRef = useRef(handleCapture)
+  useEffect(() => { handleCaptureRef.current = handleCapture }, [handleCapture])
+
+  // ── AI: Initialize when camera is ready ────────────────────────────────
+  useEffect(() => {
+    if (cameraAvailable && hasActiveTarget && !ai.scriptsLoaded && ai.status === 'unloaded') {
+      ai.initialize().then((ok) => {
+        if (ok) console.log('[SAATIRIL OP] AI initialized')
+      })
+    }
+  }, [cameraAvailable, hasActiveTarget])
+
+  // ── AI: Start/stop detection based on auto-capture toggle ────────────
+  useEffect(() => {
+    if (aiAutoCapture && ai.modelLoaded && cameraAvailable && videoRef.current && hasActiveTarget) {
+      ai.startDetection(videoRef.current, (event: AIMomentEvent) => {
+        console.log('[SAATIRIL OP] AI moment:', event.type, 'phase:', capturePhaseRef.current)
+        const phase = capturePhaseRef.current
+        if (event.type === 'toga' && phase === 'ready-1') {
+          handleCaptureRef.current()
+        } else if (event.type === 'ijazah' && phase === 'ready-2') {
+          handleCaptureRef.current()
+        }
+      })
+    } else if (!aiAutoCapture && ai.isRunning) {
+      ai.stopDetection()
+    }
+  }, [aiAutoCapture, ai.modelLoaded, cameraAvailable, hasActiveTarget, capturePhase])
+
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
@@ -702,6 +742,25 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             <div className="absolute left-0 right-0 top-[33.333%] h-px bg-white/[0.12]" />
             <div className="absolute left-0 right-0 top-[66.666%] h-px bg-white/[0.12]" />
           </div>
+
+          {/* AI Detection Overlay */}
+          {ai.isRunning && ai.momentState !== 'idle' && (
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 7 }}>
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 rounded-md"
+                style={{
+                  backgroundColor: ai.momentState.includes('sustained') ? 'rgba(34,197,94,0.85)' : 'rgba(212,175,55,0.85)',
+                  color: '#1a0b2e',
+                }}>
+                <Sparkles className="size-3" />
+                <span className="text-[10px] font-bold uppercase">
+                  {ai.momentState === 'toga_possible' && 'Deteksi Toga...'}
+                  {ai.momentState === 'toga_sustained' && 'TOGA TERDETEKSI!'}
+                  {ai.momentState === 'ijazah_possible' && 'Deteksi Ijazah...'}
+                  {ai.momentState === 'ijazah_sustained' && 'IJAZAH TERDETEKSI!'}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Flash overlay */}
           <div
@@ -824,6 +883,13 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               </Badge>
             )}
             <NetworkQualityBadge />
+            {ai.isRunning && (
+              <Badge className="text-[9px] px-1.5 py-0.5 border-0 animate-pulse"
+                style={{ backgroundColor: 'rgba(0,0,0,0.6)', color: '#22c55e' }}>
+                <Brain className="size-2.5 mr-0.5" />
+                AI {ai.posesDetected > 0 ? `(${ai.posesDetected})` : ''}
+              </Badge>
+            )}
           </div>
 
           {/* Hidden canvas for photo capture */}
@@ -1016,6 +1082,57 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
               )}
             </div>
           </ScrollArea>
+        </Card>
+
+        {/* ── AI Auto-Capture Control ────────────────────────────────────── */}
+        <Card className="shrink-0 border rounded-lg" style={{ backgroundColor: THEME.card, borderColor: ai.isRunning ? '#22c55e55' : THEME.border }}>
+          <CardContent className="p-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5">
+                <Brain className="size-3.5" style={{ color: ai.isRunning ? '#22c55e' : THEME.border }} />
+                <span className="text-[11px] font-semibold" style={{ color: ai.isRunning ? '#22c55e' : THEME.muted }}>
+                  AI Auto-Capture
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={`h-6 px-2 text-[10px] ${aiAutoCapture ? 'bg-emerald-500/20 text-emerald-400' : ''}`}
+                style={{
+                  border: `1px solid ${aiAutoCapture ? '#22c55e55' : THEME.border}`,
+                  color: aiAutoCapture ? '#22c55e' : THEME.muted,
+                }}
+                onClick={() => {
+                  if (!aiAutoCapture && !ai.modelLoaded) {
+                    ai.initialize().then((ok) => { if (ok) setAiAutoCapture(true) })
+                  } else {
+                    setAiAutoCapture(!aiAutoCapture)
+                  }
+                }}
+                disabled={ai.status === 'loading_scripts' || ai.status === 'loading_model'}
+              >
+                {ai.status === 'loading_scripts' || ai.status === 'loading_model' ? (
+                  <><Loader2 className="size-3 mr-1 animate-spin" />Loading...</>
+                ) : aiAutoCapture ? (
+                  <><Zap className="size-3 mr-1" />Aktif</>
+                ) : (
+                  <><Sparkles className="size-3 mr-1" />Mulai</>
+                )}
+              </Button>
+            </div>
+            {ai.error && (
+              <p className="text-[9px] text-red-400 mb-1">{ai.error}</p>
+            )}
+            {ai.isRunning && (
+              <div className="flex items-center gap-1 text-[9px]" style={{ color: THEME.muted }}>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Mendeteksi {ai.posesDetected} orang</span>
+              </div>
+            )}
+            {ai.status === 'model_ready' && !aiAutoCapture && (
+              <p className="text-[9px]" style={{ color: THEME.muted }}>Model siap — klik Mulai</p>
+            )}
+          </CardContent>
         </Card>
 
         {/* ── Capture Button ────────────────────────────────────────────── */}
