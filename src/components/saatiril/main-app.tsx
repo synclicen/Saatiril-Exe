@@ -53,14 +53,14 @@ const TABS: TabConfig[] = [
 ]
 
 // ─── Mode badge text helper ───────────────────────────────────────────────────
-function getModeBadgeText(role: Role, channel: number): string {
+function getModeBadgeText(role: Role, channel: number, photoMode: string): string {
   switch (role) {
     case 'admin':
       return 'Admin Control Center'
     case 'mc':
-      return `Layar MC - Jalur ${channel}`
+      return photoMode === 'photoshoot' ? `Monitor Photoshoot` : `Layar MC - Jalur ${channel}`
     case 'operator':
-      return `Kamera - Jalur ${channel}`
+      return photoMode === 'photoshoot' ? `Kamera Photoshoot` : `Kamera - Jalur ${channel}`
   }
 }
 
@@ -92,6 +92,7 @@ export function MainApp() {
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const isDualMode = currentProject?.config.mode === 'dual'
+  const isPhotoshoot = currentProject?.config.photoMode === 'photoshoot'
   // Non-admin is synced when they have a project (from server or localStorage)
   const isSynced = myRole === 'admin' || currentProject !== null
   const effectiveTab: AppTab = useMemo(() => {
@@ -408,8 +409,8 @@ export function MainApp() {
               {myRole === 'admin' && <LayoutDashboard className="size-3" />}
               {myRole === 'mc' && <Megaphone className="size-3" />}
               {myRole === 'operator' && <Camera className="size-3" />}
-              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel)}</span>
-              <span className="md:hidden">{myRole === 'admin' ? 'Admin' : myRole === 'mc' ? `MC-${myChannel}` : `Op-${myChannel}`}</span>
+              <span className="hidden md:inline">{getModeBadgeText(myRole, myChannel, currentProject?.config?.photoMode ?? 'graduation')}</span>
+              <span className="md:hidden">{myRole === 'admin' ? 'Admin' : isPhotoshoot ? (myRole === 'mc' ? 'Monitor' : `Op-${myChannel}`) : (myRole === 'mc' ? `MC-${myChannel}` : `Op-${myChannel}`)}</span>
             </Badge>
 
             {/* Channel indicator (MC/Operator only) — hidden on mobile since badge shows it */}
@@ -468,7 +469,13 @@ export function MainApp() {
           {/* Tab navigation (admin only) — compact on mobile */}
           {myRole === 'admin' && (
             <div className="flex items-center gap-1 border-t px-2 py-1 sm:px-4 md:px-6" style={{ borderColor: `${THEME.border}66` }}>
-              {TABS.map((tab) => {
+              {TABS.filter((tab) => {
+                // Hide MC tab in photoshoot mode (MC is just a monitor, not essential)
+                if (isPhotoshoot && tab.id === 'mc') return false
+                return true
+              }).map((tab) => {
+                // Adjust tab labels for photoshoot mode
+                const tabLabel = isPhotoshoot && tab.id === 'mc' ? 'Monitor' : tab.label
                 const isActive = effectiveTab === tab.id
                 return (
                   <button
@@ -492,7 +499,7 @@ export function MainApp() {
                     role="tab"
                   >
                     {tab.icon}
-                    <span className="hidden sm:inline">{tab.label}</span>
+                    <span className="hidden sm:inline">{tabLabel}</span>
                   </button>
                 )
               })}

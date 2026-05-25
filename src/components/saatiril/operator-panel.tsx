@@ -41,6 +41,7 @@ import {
   type Student,
   type StudentStatus,
   type PhotoHistoryItem,
+  type PhotoMode,
   mergeDatabases,
   stripFrameForSync,
   preserveFrameOnSync,
@@ -172,6 +173,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [videoDevices, setVideoDevices] = useState<VideoDeviceInfo[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [cameraAvailable, setCameraAvailable] = useState(false)
   const [flashVisible, setFlashVisible] = useState(false)
@@ -197,6 +199,8 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Derived config ───────────────────────────────────────────────────────
   const config = currentProject?.config
+  const photoMode: PhotoMode = config?.photoMode ?? 'graduation'
+  const isPhotoshoot = photoMode === 'photoshoot'
   const aspectRatio = config?.ratio ? parseRatio(config.ratio) : 4 / 3
   const cssFilter = config?.preset ? PRESET_FILTERS[config.preset] ?? 'none' : 'none'
   const frameData = config?.frame ?? null
@@ -238,31 +242,68 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   // ── Derived data ─────────────────────────────────────────────────────────
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
+    // Photoshoot: show ALL students (shared data, no channel filter)
+    if (isPhotoshoot) return currentProject.database
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
-  }, [currentProject, myChannel])
+  }, [currentProject, myChannel, isPhotoshoot])
 
   const currentlyActive = useMemo<Student | null>(() => {
+    if (isPhotoshoot) {
+      // Photoshoot: check if any student is active on our channel
+      return channelStudents.find((s) => s.status === `active_${myChannel}`) ?? null
+    }
     const targetStatus: StudentStatus = `active_${myChannel}`
     return channelStudents.find((s) => s.status === targetStatus) ?? null
-  }, [channelStudents, myChannel])
+  }, [channelStudents, myChannel, isPhotoshoot])
 
   const nextPending = useMemo<Student | null>(() => {
+    if (isPhotoshoot) return null // No auto-next in photoshoot — operator picks
     return channelStudents.find((s) => s.status === 'pending') ?? null
-  }, [channelStudents])
+  }, [channelStudents, isPhotoshoot])
 
   const remainingCount = useMemo<number>(() => {
     return channelStudents.filter((s) => s.status === 'pending').length
   }, [channelStudents])
 
+  const doneCount = useMemo<number>(() => {
+    return channelStudents.filter((s) => s.status === 'done').length
+  }, [channelStudents])
+
+  // Photoshoot: filtered and sorted list for display
+  const displayStudents = useMemo<Student[]>(() => {
+    if (!isPhotoshoot) return channelStudents
+    let list = channelStudents
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter((s) =>
+        s.nama.toLowerCase().includes(q) || s.nim.toLowerCase().includes(q)
+      )
+    }
+    // Show pending/active first, then done
+    return [...list].sort((a, b) => {
+      if (a.status === 'done' && b.status !== 'done') return 1
+      if (a.status !== 'done' && b.status === 'done') return -1
+      return 0
+    })
+  }, [channelStudents, isPhotoshoot, searchQuery])
+
   const hasActiveTarget = opCurrentTarget !== null
+
+  // Photoshoot: single photo; Graduation: 2 photos (Toga + Ijazah)
+  const requiredPhotoCount = isPhotoshoot ? 1 : 2
 
   const capturePhase = useMemo<CapturePhase>(() => {
     if (sending) return 'sending'
     if (!hasActiveTarget) return 'standby'
+    if (isPhotoshoot) {
+      // Photoshoot: only 1 photo needed
+      return opCapturedPhotos.length === 0 ? 'ready-1' : 'sending'
+    }
+    // Graduation: 2 photos
     if (opCapturedPhotos.length === 0) return 'ready-1'
     if (opCapturedPhotos.length === 1) return 'ready-2'
     return 'standby'
-  }, [sending, hasActiveTarget, opCapturedPhotos.length])
+  }, [sending, hasActiveTarget, opCapturedPhotos.length, isPhotoshoot])
 
   // ── Auto-scroll refs ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -398,6 +439,30 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   useEffect(() => { myChannelRef.current = myChannel }, [myChannel])
   useEffect(() => { currentProjectRef.current = currentProject }, [currentProject])
 
+  // ── Manual target selection (Photoshoot mode) ─────────────────────────
+  const handleSelectTarget = useCallback((student: Student) => {
+    if (!isPhotoshoot) return
+    if (student.status === 'done') return // Can't select already done
+    if (hasActiveTarget) return // Already have a target
+    const newStatus: StudentStatus = `active_${myChannel}`
+    setOpCurrentTarget({ ...student, status: newStatus })
+    updateStudentStatus(student.id, newStatus)
+    saveProjectsToStorageNow()
+
+    const latestProject = useSaatirilStore.getState().currentProject
+    if (latestProject) {
+      const updatedProject = {
+        ...latestProject,
+        database: latestProject.database.map((s) =>
+          s.id === student.id ? { ...s, status: newStatus } : s
+        ),
+      }
+      updateCurrentProject(updatedProject)
+      emitLocal('SYNC_DB', { project: stripFrameForSync(updatedProject) })
+      emitLocal('MC_CALL', { student: { ...student, status: newStatus }, channel: myChannel })
+    }
+  }, [isPhotoshoot, hasActiveTarget, myChannel, setOpCurrentTarget, updateStudentStatus, saveProjectsToStorageNow, updateCurrentProject])
+
   // ── State recovery ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentProject) return
@@ -454,10 +519,10 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
       console.log('[SAATIRIL OP] finalizeCapture: photoCount =', photoCount)
 
-      if (photoCount === 1) {
+      if (photoCount === 1 && !isPhotoshoot) {
         isCapturingRef.current = false
         emitLocal('OP_PROGRESS', { channel: myChannel, status: 'Pose 1 OK — Siap Foto 2' })
-      } else if (photoCount >= 2) {
+      } else if ((isPhotoshoot && photoCount >= 1) || (!isPhotoshoot && photoCount >= 2)) {
         if (!currentTarget) {
           console.warn('[SAATIRIL OP] finalizeCapture: opCurrentTarget is null — aborting')
           setSending(false)
@@ -490,21 +555,37 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
           const api = window.saatirilAPI
           if (api?.savePhoto) {
             const targetFolder = projConfig.targetFolder
-            const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
-            const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
 
-            Promise.all([
-              api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
-              api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
-            ]).then(([path1, path2]) => {
-              if (path1 && path2) {
-                console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
-              } else {
-                console.warn('[SAATIRIL OP] Some photos failed to save to disk')
-              }
-            }).catch((err) => {
-              console.error('[SAATIRIL OP] Error saving photos to disk:', err)
-            })
+            if (isPhotoshoot) {
+              // Photoshoot: single photo with generic name
+              const photoFilename = buildFilename(student.nim, student.nama, 1, 'Photo')
+              api.savePhoto({ base64Data: allPhotos[0], filename: photoFilename, targetFolder }).then((path1) => {
+                if (path1) {
+                  console.log(`[SAATIRIL OP] Photo saved to disk: → ${path1}`)
+                } else {
+                  console.warn('[SAATIRIL OP] Photo failed to save to disk')
+                }
+              }).catch((err) => {
+                console.error('[SAATIRIL OP] Error saving photo to disk:', err)
+              })
+            } else {
+              // Graduation: 2 photos (Toga + Ijazah)
+              const togaFilename = buildFilename(student.nim, student.nama, 1, 'Toga')
+              const ijazahFilename = buildFilename(student.nim, student.nama, 2, 'Ijazah')
+
+              Promise.all([
+                api.savePhoto({ base64Data: allPhotos[0], filename: togaFilename, targetFolder }),
+                api.savePhoto({ base64Data: allPhotos[1], filename: ijazahFilename, targetFolder }),
+              ]).then(([path1, path2]) => {
+                if (path1 && path2) {
+                  console.log(`[SAATIRIL OP] Photos saved to disk:\n  → ${path1}\n  → ${path2}`)
+                } else {
+                  console.warn('[SAATIRIL OP] Some photos failed to save to disk')
+                }
+              }).catch((err) => {
+                console.error('[SAATIRIL OP] Error saving photos to disk:', err)
+              })
+            }
           } else {
             console.log('[SAATIRIL OP] Not running in Electron — photos not saved to disk')
           }
@@ -532,7 +613,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         }, 100)
       }
     },
-    [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
+    [myChannel, isPhotoshoot, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
   )
 
   // ── Photo capture logic ──────────────────────────────────────────────────
@@ -630,12 +711,18 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Progress badge text ──────────────────────────────────────────────────
   const progressText = useMemo(() => {
+    if (isPhotoshoot) {
+      if (!hasActiveTarget) return 'Pilih target dari daftar...'
+      if (capturePhase === 'ready-1') return 'Siap Foto'
+      if (capturePhase === 'sending') return 'Mengirim...'
+      return 'Pilih target dari daftar...'
+    }
     if (!hasActiveTarget) return 'Menunggu Arahan MC...'
     if (capturePhase === 'ready-1') return 'Siap Foto 1'
     if (capturePhase === 'ready-2') return 'Pose 1 OK - Siap Foto 2'
     if (capturePhase === 'sending') return 'Mengirim...'
     return 'Menunggu Arahan MC...'
-  }, [hasActiveTarget, capturePhase])
+  }, [hasActiveTarget, capturePhase, isPhotoshoot])
 
   // ── Render helpers ───────────────────────────────────────────────────────
   const getRowStyle = (student: Student): React.CSSProperties => {
@@ -771,7 +858,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     if (capturePhase === 'ready-1') {
       return (
         <Button onClick={handleCapture} className={btnClass} style={{ backgroundColor: THEME.gold, color: THEME.bg, border: `2px solid ${THEME.gold}`, boxShadow: `0 0 30px ${THEME.gold}44, 0 0 60px ${THEME.gold}22` }}>
-          <Camera className="size-4 mr-2" />FOTO 1 — TOGA
+          <Camera className="size-4 mr-2" />{isPhotoshoot ? 'AMBIL FOTO' : 'FOTO 1 — TOGA'}
         </Button>
       )
     }
@@ -806,10 +893,32 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         style={{ borderBottom: `1px solid ${THEME.border}` }}
       >
         <h3 className="text-xs font-semibold" style={{ color: '#ffffff' }}>
-          Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span>
+          {isPhotoshoot ? (
+            <>Sisa: <span style={{ color: 'cyan' }} className="font-bold">{remainingCount}</span> / Selesai: <span style={{ color: '#4ade80' }} className="font-bold">{doneCount}</span></>
+          ) : (
+            <>Antrean: <span style={{ color: THEME.gold }} className="font-bold">{remainingCount}</span></>
+          )}
         </h3>
-        <span className="text-[10px]" style={{ color: THEME.muted }}>Ch.{myChannel}</span>
+        <span className="text-[10px]" style={{ color: THEME.muted }}>{isPhotoshoot ? 'Semua' : `Ch.${myChannel}`}</span>
       </div>
+
+      {/* Search input for photoshoot mode */}
+      {isPhotoshoot && (
+        <div className="shrink-0 px-3 py-1.5" style={{ borderBottom: `1px solid ${THEME.border}` }}>
+          <input
+            type="text"
+            placeholder="Cari nama/NIM..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-md px-2 py-1 text-xs border outline-none"
+            style={{
+              backgroundColor: THEME.bg,
+              borderColor: THEME.border,
+              color: '#ffffff',
+            }}
+          />
+        </div>
+      )}
 
       {/* Column headers — hide on very compact view */}
       {!compact && (
@@ -825,12 +934,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
         <div className="flex flex-col">
           {channelStudents.length === 0 ? (
             <div className="flex items-center justify-center py-8">
-              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada mahasiswa</p>
+              <p className="text-xs" style={{ color: THEME.muted }}>Tidak ada data</p>
             </div>
           ) : (
-            channelStudents.map((student, idx) => {
+            displayStudents.map((student, idx) => {
               const isActive = student.status === `active_${myChannel}`
               const isNext = student.id === nextPending?.id && student.status === 'pending'
+              // Photoshoot: rows are clickable to select target
+              const canSelect = isPhotoshoot && !hasActiveTarget && student.status !== 'done'
 
               if (compact) {
                 // Mobile compact: only show name + status
@@ -838,8 +949,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                   <div
                     key={student.id}
                     ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                    className="flex items-center gap-2 px-3 py-1.5 transition-colors duration-200"
+                    className={`flex items-center gap-2 px-3 py-1.5 transition-colors duration-200 ${canSelect ? 'cursor-pointer hover:bg-white/5 active:bg-white/10' : ''}`}
                     style={getRowStyle(student)}
+                    onClick={() => canSelect && handleSelectTarget(student)}
                   >
                     <span className="text-[10px] font-mono w-5 shrink-0" style={{ color: THEME.muted }}>{idx + 1}</span>
                     <span className={`text-xs font-medium truncate flex-1 ${student.status === 'done' ? 'line-through' : ''}`} style={{ color: isActive ? THEME.gold : student.status === 'done' ? THEME.muted : '#ffffff' }}>
@@ -854,8 +966,9 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                 <div
                   key={student.id}
                   ref={isActive ? activeRowRef : isNext ? nextRowRef : undefined}
-                  className="grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200"
+                  className={`grid grid-cols-[24px_60px_1fr_60px] gap-0.5 items-center px-2 py-1 transition-colors duration-200 ${canSelect ? 'cursor-pointer hover:bg-white/5 active:bg-white/10' : ''}`}
                   style={getRowStyle(student)}
+                  onClick={() => canSelect && handleSelectTarget(student)}
                 >
                   <span className="text-[9px] font-mono" style={{ color: THEME.muted }}>{idx + 1}</span>
                   <span className="text-[9px] font-mono truncate" style={{ color: THEME.muted }}>{student.nim}</span>

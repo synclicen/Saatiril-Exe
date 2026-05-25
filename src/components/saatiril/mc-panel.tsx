@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, type PhotoMode, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
@@ -77,6 +77,9 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const updateCurrentProject = useSaatirilStore((s) => s.updateCurrentProject)
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
+  const photoMode: PhotoMode = currentProject?.config?.photoMode ?? 'graduation'
+  const isPhotoshoot = photoMode === 'photoshoot'
+
   const [opProgressText, setOpProgressText] = useState<string>('')
 
   const myChannelRef = useRef(myChannel)
@@ -86,8 +89,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const channelStudents = useMemo<Student[]>(() => {
     if (!currentProject) return []
+    // Photoshoot: show ALL students (shared data)
+    if (isPhotoshoot) return currentProject.database
     return currentProject.database.filter((s) => s.assignedChannel === myChannel)
-  }, [currentProject, myChannel])
+  }, [currentProject, myChannel, isPhotoshoot])
 
   const currentlyActive = useMemo<Student | null>(() => {
     const targetStatus: StudentStatus = `active_${myChannel}`
@@ -100,6 +105,10 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   const remainingCount = useMemo<number>(() => {
     return channelStudents.filter((s) => s.status === 'pending').length
+  }, [channelStudents])
+
+  const doneCount = useMemo<number>(() => {
+    return channelStudents.filter((s) => s.status === 'done').length
   }, [channelStudents])
 
   const isPhotographing = currentlyActive !== null
@@ -240,6 +249,25 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
 
   // ── Render helpers
   const renderCallButton = () => {
+    // Photoshoot mode: no calling — operator picks target
+    if (isPhotoshoot) {
+      return (
+        <Button
+          disabled
+          className={`w-full font-bold cursor-not-allowed ${isMobile ? 'h-12 text-sm' : 'h-14 text-lg'}`}
+          style={{
+            backgroundColor: THEME.panel,
+            color: THEME.muted,
+            border: `2px solid ${THEME.border}`,
+            opacity: 0.6,
+          }}
+        >
+          <Monitor className="size-5" />
+          PHOTOSHOOT — MONITOR SAJA
+        </Button>
+      )
+    }
+
     if (readOnly) {
       return (
         <Button
@@ -416,12 +444,36 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           <CardContent className="p-3 space-y-2">
             <p
               className="text-[10px] font-semibold uppercase tracking-widest"
-              style={{ color: THEME.gold }}
+              style={{ color: isPhotoshoot ? '#22d3ee' : THEME.gold }}
             >
-              Target Selanjutnya
+              {isPhotoshoot ? 'Monitor Photoshoot' : 'Target Selanjutnya'}
             </p>
 
-            {nextPending ? (
+            {isPhotoshoot ? (
+              <div className="space-y-0.5">
+                <p className="text-sm" style={{ color: THEME.muted }}>
+                  Operator memilih target sendiri
+                </p>
+                <div className="flex gap-3 mt-1">
+                  <span className="text-xs" style={{ color: THEME.muted }}>
+                    Sisa: <span style={{ color: '#22d3ee' }} className="font-bold">{remainingCount}</span>
+                  </span>
+                  <span className="text-xs" style={{ color: THEME.muted }}>
+                    Selesai: <span style={{ color: '#4ade80' }} className="font-bold">{doneCount}</span>
+                  </span>
+                </div>
+                {currentlyActive && (
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-xs font-semibold" style={{ color: THEME.gold }}>
+                      Sedang difoto:
+                    </p>
+                    <p className="text-base font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
+                      {currentlyActive.nama}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : nextPending ? (
               <div className="space-y-0.5">
                 <p className="text-xl font-bold leading-tight truncate" style={{ color: '#ffffff' }}>
                   {nextPending.nama}

@@ -8,9 +8,11 @@ import {
   FileSpreadsheet,
   FolderOpen,
   Frame,
+  GraduationCap,
   ImagePlus,
   Monitor,
   Upload,
+  UserRound,
   X,
 } from 'lucide-react'
 
@@ -32,7 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { useSaatirilStore, type Student, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type PhotoMode, stripFrameForSync } from '@/store/use-saatiril-store'
 import { emitLocal } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -54,6 +56,7 @@ export default function ProjectSetup() {
 
   // ── Form state ─────────────────────────────────────────────────────────────
   const [projectName, setProjectName] = useState('')
+  const [photoMode, setPhotoMode] = useState<PhotoMode>('graduation')
   const [cameraMode, setCameraMode] = useState<'single' | 'dual'>('single')
   const [ratio, setRatio] = useState('4:3')
   const [preset, setPreset] = useState('original')
@@ -253,14 +256,16 @@ export default function ProjectSetup() {
 
   // ── Form validation ────────────────────────────────────────────────────────
   const isNameValid = projectName.trim().length > 0
-  const isSingleDataReady = cameraMode === 'single' && excelData[0] !== null && excelData[0]!.students.length > 0
+  // Photoshoot always uses single upload; Graduation dual needs both
+  const isSingleDataReady = excelData[0] !== null && excelData[0]!.students.length > 0
   const isDualDataReady =
-    cameraMode === 'dual' &&
     excelData[0] !== null &&
     excelData[0]!.students.length > 0 &&
     excelData[1] !== null &&
     excelData[1]!.students.length > 0
-  const isDataReady = isSingleDataReady || isDualDataReady
+  const isDataReady = photoMode === 'photoshoot'
+    ? isSingleDataReady
+    : (cameraMode === 'single' ? isSingleDataReady : isDualDataReady)
   const canStart = isNameValid && isDataReady
 
   // ── Submit / create project ────────────────────────────────────────────────
@@ -269,17 +274,21 @@ export default function ProjectSetup() {
 
     const allStudents: Student[] = []
 
-    if (cameraMode === 'single') {
+    if (photoMode === 'photoshoot') {
+      // Photoshoot: always single data source, all get channel 1
+      allStudents.push(...(excelData[0]?.students ?? []))
+    } else if (cameraMode === 'single') {
       allStudents.push(...(excelData[0]?.students ?? []))
     } else {
       allStudents.push(...(excelData[0]?.students ?? []))
       allStudents.push(...(excelData[1]?.students ?? []))
     }
 
-    // Re-generate unique IDs to avoid collision from parallel parsing
+    // Re-generate unique IDs & fix channel assignment for photoshoot
     const finalStudents: Student[] = allStudents.map((s, i) => ({
       ...s,
       id: `ID_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 9)}`,
+      assignedChannel: photoMode === 'photoshoot' ? 1 : s.assignedChannel,
     }))
 
     const projectId = `PRJ_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -295,6 +304,7 @@ export default function ProjectSetup() {
       name: projectName.trim(),
       config: {
         mode: cameraMode,
+        photoMode,
         ratio,
         preset,
         targetFolder: finalTargetFolder,
@@ -352,6 +362,7 @@ export default function ProjectSetup() {
   }, [
     canStart,
     cameraMode,
+    photoMode,
     excelData,
     projectName,
     ratio,
@@ -497,6 +508,76 @@ export default function ProjectSetup() {
                 </CardContent>
               </Card>
 
+              {/* Photo Mode */}
+              <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base text-white">
+                    <Camera className="h-5 w-5 text-[#d4af37]" />
+                    Jenis Foto
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Graduation */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPhotoMode('graduation')
+                        setExcelData((prev) => [prev[0], null])
+                      }}
+                      className={`
+                        relative flex flex-col items-center gap-2 rounded-lg border-2 p-4
+                        transition-all duration-200 cursor-pointer
+                        ${photoMode === 'graduation'
+                          ? 'border-[#d4af37] bg-[#d4af37]/10 shadow-lg shadow-[#d4af37]/10'
+                          : 'border-[#533485] bg-[#3b2263]/50 hover:border-[#533485]/80 hover:bg-[#3b2263]'
+                        }
+                      `}
+                    >
+                      <GraduationCap className={`h-8 w-8 ${photoMode === 'graduation' ? 'text-[#d4af37]' : 'text-[#533485]'}`} />
+                      <span className={`text-sm font-bold ${photoMode === 'graduation' ? 'text-[#d4af37]' : 'text-[#c4b5fd]'}`}>
+                        Prosesi Wisuda
+                      </span>
+                      <span className="text-[10px] text-[#533485] text-center leading-tight">
+                        Antrean terurut • MC memanggil • 2 foto/orang
+                      </span>
+                      {photoMode === 'graduation' && (
+                        <div className="absolute top-1.5 right-1.5 size-2 rounded-full bg-[#d4af37] animate-pulse" />
+                      )}
+                    </button>
+
+                    {/* Photoshoot */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPhotoMode('photoshoot')
+                        setCameraMode('single')
+                        setExcelData((prev) => [prev[0], null])
+                      }}
+                      className={`
+                        relative flex flex-col items-center gap-2 rounded-lg border-2 p-4
+                        transition-all duration-200 cursor-pointer
+                        ${photoMode === 'photoshoot'
+                          ? 'border-cyan-400 bg-cyan-400/10 shadow-lg shadow-cyan-400/10'
+                          : 'border-[#533485] bg-[#3b2263]/50 hover:border-[#533485]/80 hover:bg-[#3b2263]'
+                        }
+                      `}
+                    >
+                      <UserRound className={`h-8 w-8 ${photoMode === 'photoshoot' ? 'text-cyan-400' : 'text-[#533485]'}`} />
+                      <span className={`text-sm font-bold ${photoMode === 'photoshoot' ? 'text-cyan-400' : 'text-[#c4b5fd]'}`}>
+                        Photoshoot
+                      </span>
+                      <span className="text-[10px] text-[#533485] text-center leading-tight">
+                        Bebas urutan • Operator pilih • 1 foto/orang
+                      </span>
+                      {photoMode === 'photoshoot' && (
+                        <div className="absolute top-1.5 right-1.5 size-2 rounded-full bg-cyan-400 animate-pulse" />
+                      )}
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Camera Mode */}
               <Card className="border-[#533485] bg-[#2a164a] shadow-lg">
                 <CardHeader className="pb-2">
@@ -515,21 +596,37 @@ export default function ProjectSetup() {
                         setExcelData((prev) => [prev[0], null])
                       }
                     }}
+                    disabled={photoMode === 'photoshoot'}
                   >
                     <SelectTrigger className="w-full border-[#533485] bg-[#3b2263] text-white focus:ring-[#d4af37]/30">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="border-[#533485] bg-[#2a164a]">
-                      <SelectItem value="single" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                        Single Mode — 1 MC & 1 Kamera
-                      </SelectItem>
-                      <SelectItem value="dual" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                        Dual Mode — 2 MC & 2 Kamera Bersamaan
-                      </SelectItem>
+                      {photoMode === 'photoshoot' ? (
+                        <SelectItem value="single" className="text-white focus:bg-[#3b2263] focus:text-cyan-400">
+                          Single — 1 Kamera
+                        </SelectItem>
+                      ) : (
+                        <>
+                          <SelectItem value="single" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                            Single Mode — 1 MC & 1 Kamera
+                          </SelectItem>
+                          <SelectItem value="dual" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                            Dual Mode — 2 MC & 2 Kamera Bersamaan
+                          </SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
 
-                  {cameraMode === 'single' ? (
+                  {photoMode === 'photoshoot' ? (
+                    <Badge
+                      variant="outline"
+                      className="border-cyan-400/40 text-cyan-400"
+                    >
+                      1 Sumber Data — Operator Pilih Target
+                    </Badge>
+                  ) : cameraMode === 'single' ? (
                     <Badge
                       variant="outline"
                       className="border-[#d4af37]/40 text-[#d4af37]"
@@ -564,7 +661,15 @@ export default function ProjectSetup() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {cameraMode === 'single' ? (
+                  {photoMode === 'photoshoot' ? (
+                    // Photoshoot: always single upload, shared data
+                    renderUploadZone(
+                      0,
+                      'Data Pegawai',
+                      '#22d3ee',
+                      'border-cyan-400/50',
+                    )
+                  ) : cameraMode === 'single' ? (
                     renderUploadZone(
                       0,
                       'Data Peserta',
@@ -811,13 +916,15 @@ export default function ProjectSetup() {
                 <span>Upload data peserta (Excel) untuk melanjutkan</span>
               )}
               {canStart && (
-                <span className="text-[#d4af37]">
+                <span className={photoMode === 'photoshoot' ? 'text-cyan-400' : 'text-[#d4af37]'}>
                   Siap memulai —{' '}
-                  {cameraMode === 'single'
+                  {photoMode === 'photoshoot'
                     ? excelData[0]?.students.length
-                    : (excelData[0]?.students.length ?? 0) +
-                      (excelData[1]?.students.length ?? 0)}{' '}
-                  peserta akan dimuat
+                    : cameraMode === 'single'
+                      ? excelData[0]?.students.length
+                      : (excelData[0]?.students.length ?? 0) +
+                        (excelData[1]?.students.length ?? 0)}{' '}
+                  {photoMode === 'photoshoot' ? 'pegawai' : 'peserta'} akan dimuat
                 </span>
               )}
             </div>

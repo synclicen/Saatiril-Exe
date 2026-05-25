@@ -12,8 +12,11 @@ export interface Student {
   assignedChannel: number
 }
 
+export type PhotoMode = 'graduation' | 'photoshoot'
+
 export interface ProjectConfig {
   mode: 'single' | 'dual'
+  photoMode: PhotoMode
   ratio: string
   preset: string
   targetFolder: string
