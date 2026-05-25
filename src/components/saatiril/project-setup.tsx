@@ -626,6 +626,12 @@ export default function ProjectSetup() {
                         <SelectItem value="3:4" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
                           3:4 — Portrait
                         </SelectItem>
+                        <SelectItem value="2:3" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          2:3 — Pass Photo Portrait
+                        </SelectItem>
+                        <SelectItem value="4:6" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
+                          4:6 — Pass Photo Portrait
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
