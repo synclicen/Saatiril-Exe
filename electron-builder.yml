@@ -16,13 +16,30 @@ files:
   - electron/main.js
   - electron/preload.js
   - "!electron/build/**"
+  # Exclude heavy native deps not needed by Electron main process
+  - "!node_modules/sharp/**/*"
+  - "!node_modules/@img/**/*"
+  - "!node_modules/@parcel/watcher/**/*"
+  - "!node_modules/@tensorflow/**/*"
+  - "!node_modules/@mdxeditor/**/*"
+  - "!node_modules/@next/swc-*/**/*"
+  - "!node_modules/@swc/core-*/**/*"
+  - "!node_modules/better-sqlite3/**/*"
+  - "!node_modules/.prisma/**/*"
+  - "!node_modules/@prisma/engines/**/*"
+  - "!node_modules/prisma/**/*"
 
-# Extra resources: Next.js static export + Socket.io for in-process server
+# Extra resources: Next.js static export (served by HTTP server in main.js)
 extraResources:
   - from: out
     to: app
     filter:
       - "**/*"
+
+# ─── Skip native module rebuild ──────────────────────────────────────────────
+# Electron main process only uses socket.io (pure JS) and Node built-ins.
+# No native modules need rebuilding. Skipping prevents node-gyp errors.
+npmRebuild: false
 
 # ─── Windows build ───────────────────────────────────────────────────────────
 win:
