@@ -42,6 +42,40 @@ interface ParsedExcelData {
   students: Student[]
 }
 
+// ─── Filter preset definitions ────────────────────────────────────────────────
+// CSS filter strings mirror operator-panel.tsx so previews match live output.
+const PRESET_FILTERS: Record<string, string> = {
+  original: 'none',
+  studio: 'brightness(1.1) contrast(1.05) saturate(1.1)',
+  cinematic: 'sepia(0.15) contrast(1.1) brightness(0.95) saturate(1.3)',
+  pro: 'contrast(1.25) brightness(1.05) saturate(1.15)',
+  vivid: 'brightness(1.08) contrast(1.12) saturate(1.45) hue-rotate(5deg)',
+  softPortrait: 'brightness(1.12) contrast(0.92) saturate(1.08) sepia(0.08)',
+  classicFilm: 'brightness(1.02) contrast(1.15) saturate(0.85) sepia(0.2)',
+  dramaticBW: 'brightness(1.05) contrast(1.35) saturate(0) grayscale(1)',
+  warmSunset: 'brightness(1.06) contrast(1.08) saturate(1.3) sepia(0.18) hue-rotate(-10deg)',
+}
+
+interface PresetOption {
+  value: string
+  name: string
+  desc: string
+}
+
+const PRESET_OPTIONS: PresetOption[] = [
+  { value: 'original', name: 'Original', desc: 'Tanpa Filter' },
+  { value: 'studio', name: 'Studio Bright', desc: 'Cahaya Studio Hangat' },
+  { value: 'cinematic', name: 'Cinematic Gold', desc: 'Tone Sinematik Emas' },
+  { value: 'pro', name: 'Preset Pro', desc: 'High Contrast + Sharpening' },
+  { value: 'vivid', name: 'Vivid', desc: 'Warna Cerah & Kontras Tinggi' },
+  { value: 'softPortrait', name: 'Soft Portrait', desc: 'Kulit Lembut & Hangat' },
+  { value: 'classicFilm', name: 'Classic Film', desc: 'Nuansa Film Vintage' },
+  { value: 'dramaticBW', name: 'Dramatic B&W', desc: 'Hitam Putih Dramatis' },
+  { value: 'warmSunset', name: 'Warm Sunset', desc: 'Tone Emas Sore Hari' },
+]
+
+const PRESET_PREVIEW_SRC = '/saatiril/presets/base-graduate.png'
+
 // ─── Component ─────────────────────────────────────────────────────────────────
 export default function ProjectSetup() {
   const { toast } = useToast()
@@ -638,40 +672,70 @@ export default function ProjectSetup() {
                     <Label className="text-sm font-medium text-[#c4b5fd]">
                       Filter Preset
                     </Label>
-                    <Select value={preset} onValueChange={setPreset}>
-                      <SelectTrigger className="w-full border-[#533485] bg-[#3b2263] text-white focus:ring-[#d4af37]/30">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="border-[#533485] bg-[#2a164a]">
-                        <SelectItem value="original" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Original Sensor — Tanpa Filter
-                        </SelectItem>
-                        <SelectItem value="studio" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Studio Bright — Cahaya Studio Hangat
-                        </SelectItem>
-                        <SelectItem value="cinematic" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Cinematic Gold — Tone Sinematik Emas
-                        </SelectItem>
-                        <SelectItem value="pro" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Preset Pro — High Contrast + Sharpening
-                        </SelectItem>
-                        <SelectItem value="vivid" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Vivid — Warna Cerah & Kontras Tinggi
-                        </SelectItem>
-                        <SelectItem value="softPortrait" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Soft Portrait — Kulit Lembut & Hangat
-                        </SelectItem>
-                        <SelectItem value="classicFilm" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Classic Film — Nuansa Film Vintage
-                        </SelectItem>
-                        <SelectItem value="dramaticBW" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Dramatic B&W — Hitam Putih Dramatis
-                        </SelectItem>
-                        <SelectItem value="warmSunset" className="text-white focus:bg-[#3b2263] focus:text-[#d4af37]">
-                          Warm Sunset — Tone Emas Sore Hari
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
+
+                    {/* Selected preview + name */}
+                    <div className="flex items-center gap-3 rounded-lg border border-[#533485] bg-[#3b2263]/40 p-2.5">
+                      <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-md border border-[#d4af37]/40 bg-black">
+                        <img
+                          src={PRESET_PREVIEW_SRC}
+                          alt="Preset preview"
+                          className="h-full w-full object-cover"
+                          style={{ filter: PRESET_FILTERS[preset] }}
+                          draggable={false}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-[#d4af37]">
+                          {PRESET_OPTIONS.find((p) => p.value === preset)?.name ?? 'Original'}
+                        </p>
+                        <p className="truncate text-xs text-[#c4b5fd]/80">
+                          {PRESET_OPTIONS.find((p) => p.value === preset)?.desc ?? 'Tanpa Filter'}
+                        </p>
+                        <p className="mt-0.5 text-[10px] uppercase tracking-wide text-[#c4b5fd]/50">
+                          Klik thumbnail untuk membandingkan
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Thumbnail grid — same base photo, each with its CSS filter applied */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {PRESET_OPTIONS.map((opt) => {
+                        const selected = preset === opt.value
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setPreset(opt.value)}
+                            title={`${opt.name} — ${opt.desc}`}
+                            aria-pressed={selected}
+                            className={`
+                              group flex flex-col items-center gap-1 rounded-lg border p-1.5
+                              transition-all duration-150
+                              ${selected
+                                ? 'border-[#d4af37] bg-[#d4af37]/10 ring-1 ring-[#d4af37]/40'
+                                : 'border-[#533485] bg-[#3b2263]/30 hover:border-[#d4af37]/50 hover:bg-[#3b2263]/60'}
+                            `}
+                          >
+                            <div
+                              className={`relative h-14 w-11 overflow-hidden rounded-md bg-black ${selected ? 'ring-1 ring-[#d4af37]' : ''}`}
+                            >
+                              <img
+                                src={PRESET_PREVIEW_SRC}
+                                alt={opt.name}
+                                className="h-full w-full object-cover"
+                                style={{ filter: PRESET_FILTERS[opt.value] }}
+                                draggable={false}
+                              />
+                            </div>
+                            <span
+                              className={`line-clamp-1 w-full text-center text-[10px] font-medium leading-tight ${selected ? 'text-[#d4af37]' : 'text-[#c4b5fd]/80'}`}
+                            >
+                              {opt.name}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
 
                   {/* Frame Overlay */}

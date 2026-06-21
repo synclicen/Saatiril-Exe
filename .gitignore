@@ -55,6 +55,7 @@ agent-ctx/
 .zscripts/
 # .github/ is needed for CI/CD workflows
 download/
+upload/
 .claude
 .z-ai-config
 local-*
