@@ -261,10 +261,34 @@ export function ProjectHub() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-[#533485]/50 bg-[#2a164a]/60 backdrop-blur-sm">
-        <div className="mx-auto max-w-4xl px-4 py-3 sm:px-6 sm:py-4">
-          <p className="text-center text-[10px] text-[#c4b5fd]/40 sm:text-xs">
-            Saatiril - Made by Fajrianor - Pusat Humas dan Keterbukaan Informasi
-            2026
+        <div className="mx-auto max-w-4xl px-4 py-3 sm:px-6 sm:py-4 space-y-1">
+          {/* Baris 1: Copyright — italic serif */}
+          <p
+            className="text-center italic font-serif text-[11px] sm:text-sm"
+            style={{ color: '#c4b5fd', fontWeight: 300, letterSpacing: '0.02em' }}
+          >
+            © 2026 — Made by Fajrianor
+          </p>
+          {/* Baris 2: Tagline — bold uppercase sans-serif */}
+          <p
+            className="text-center font-sans font-bold uppercase text-[10px] sm:text-xs"
+            style={{ color: '#d4af37', letterSpacing: '0.18em' }}
+          >
+            SAATIRIL: Sistem Auto Track Input, Raw Into Live
+          </p>
+          {/* Baris 3: Unit — medium tracking mono */}
+          <p
+            className="text-center font-mono text-[10px] sm:text-xs"
+            style={{ color: '#a78bfa', letterSpacing: '0.1em' }}
+          >
+            Pusat Humas dan Keterbukaan Informasi
+          </p>
+          {/* Baris 4: Institusi — extrabold sans */}
+          <p
+            className="text-center font-sans font-extrabold text-[11px] sm:text-sm"
+            style={{ color: '#fbbf24', letterSpacing: '0.06em', textTransform: 'uppercase' }}
+          >
+            UIN Antasari Banjarmasin
           </p>
         </div>
       </footer>

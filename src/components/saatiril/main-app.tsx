@@ -564,12 +564,34 @@ export function MainApp() {
           borderColor: `${THEME.border}44`,
         }}
       >
-        <div className="px-4 py-1.5 sm:px-6 sm:py-2">
+        <div className="px-4 py-1.5 sm:px-6 sm:py-2 space-y-0.5">
+          {/* Baris 1: Copyright — italic serif */}
           <p
-            className="text-center font-mono text-[8px] tracking-widest sm:text-[10px] md:text-xs"
-            style={{ color: `${THEME.muted}66` }}
+            className="text-center italic font-serif text-[8px] sm:text-[10px]"
+            style={{ color: '#c4b5fd', fontWeight: 300, letterSpacing: '0.02em' }}
           >
-            Saatiril — Pusat Humas & KI 2026
+            © 2026 — Made by Fajrianor
+          </p>
+          {/* Baris 2: Tagline — bold uppercase sans-serif */}
+          <p
+            className="text-center font-sans font-bold uppercase text-[7px] sm:text-[9px]"
+            style={{ color: '#d4af37', letterSpacing: '0.18em' }}
+          >
+            SAATIRIL: Sistem Auto Track Input, Raw Into Live
+          </p>
+          {/* Baris 3: Unit — medium tracking mono */}
+          <p
+            className="text-center font-mono text-[7px] sm:text-[9px]"
+            style={{ color: '#a78bfa', letterSpacing: '0.1em' }}
+          >
+            Pusat Humas dan Keterbukaan Informasi
+          </p>
+          {/* Baris 4: Institusi — extrabold sans */}
+          <p
+            className="text-center font-sans font-extrabold text-[8px] sm:text-[10px]"
+            style={{ color: '#fbbf24', letterSpacing: '0.06em', textTransform: 'uppercase' }}
+          >
+            UIN Antasari Banjarmasin
           </p>
         </div>
       </footer>
