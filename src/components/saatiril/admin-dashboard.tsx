@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type Student, type PhotoHistoryItem, mergeDatabases, replaceDatabase, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { onLocal, offLocal, getConnectionHealth, onLatencyUpdate, type ConnectionHealth } from '@/lib/socket'
 import { useToast } from '@/hooks/use-toast'
 
@@ -74,6 +74,9 @@ interface SyncDbData {
     database: Student[]
     photoHistory: PhotoHistoryItem[]
   }
+  // When true, receivers REPLACE their database instead of merging.
+  // Used by MC "Reset & Kirim Ulang" so status regressions (done → active) take effect.
+  force?: boolean
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -205,8 +208,12 @@ export default function AdminDashboard() {
       if (!proj) return
       // Preserve frame data: if incoming has '__FRAME_SAVED__', keep existing frame
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
-      // Merge database with incoming (prevents channel data overwrite in dual mode)
-      const mergedDb = mergeDatabases(proj.database, data.project.database)
+      // force=true (MC "Reset & Kirim Ulang") → REPLACE database so status
+      // regressions (done → active) take effect. Otherwise merge to preserve
+      // dual-channel progress.
+      const mergedDb = data.force
+        ? replaceDatabase(proj.database, data.project.database)
+        : mergeDatabases(proj.database, data.project.database)
       updateCurrentProject({
         ...proj,
         database: mergedDb,

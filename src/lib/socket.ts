@@ -178,7 +178,7 @@ interface QueuedEvent {
 const eventQueue: QueuedEvent[] = []
 const MAX_QUEUE_SIZE = 50
 const MAX_RETRIES = 3
-const CRITICAL_EVENTS = new Set(['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB'])
+const CRITICAL_EVENTS = new Set(['PHOTOS_SAVED', 'MC_CALL', 'SYNC_DB', 'REQUEST_RESEND'])
 
 function queueEvent(event: string, data: any) {
   // Only queue critical events

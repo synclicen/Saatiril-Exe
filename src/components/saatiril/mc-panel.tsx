@@ -5,11 +5,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor } from 'lucide-react'
-import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
+import { Megaphone, Users, Clock, CheckCircle2, Loader2, Camera, Monitor, RefreshCw } from 'lucide-react'
+import { useSaatirilStore, type Student, type StudentStatus, type PhotoHistoryItem, mergeDatabases, replaceDatabase, stripFrameForSync, preserveFrameOnSync } from '@/store/use-saatiril-store'
 import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
+import { useToast } from '@/hooks/use-toast'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -54,6 +55,9 @@ interface SyncDbData {
     database: Student[]
     photoHistory: PhotoHistoryItem[]
   }
+  // When true, receivers REPLACE their database instead of merging.
+  // Used by MC "Reset & Kirim Ulang" so status regressions (done → active) take effect.
+  force?: boolean
 }
 
 interface PhotosSavedData {
@@ -70,6 +74,7 @@ interface OpProgressData {
 // ─── Component ──────────────────────────────────────────────────────────────
 export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const isMobile = useIsMobile()
+  const { toast } = useToast()
 
   const currentProject = useSaatirilStore((s) => s.currentProject)
   const myChannel = useSaatirilStore((s) => s.myChannel)
@@ -78,6 +83,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
   const saveProjectsToStorageNow = useSaatirilStore((s) => s.saveProjectsToStorageNow)
 
   const [opProgressText, setOpProgressText] = useState<string>('')
+  const [resending, setResending] = useState(false)
 
   const myChannelRef = useRef(myChannel)
   const currentProjectRef = useRef(currentProject)
@@ -121,10 +127,14 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       const proj = data.project
       const curProj = currentProjectRef.current
       if (curProj && proj.id === curProj.id) {
-        const mergedDb = mergeDatabases(curProj.database, proj.database)
+        // force=true (from another MC's "Reset & Kirim Ulang") → REPLACE database
+        // so status regressions take effect on this MC too.
+        const nextDb = data.force
+          ? replaceDatabase(curProj.database, proj.database)
+          : mergeDatabases(curProj.database, proj.database)
         updateCurrentProject({
           ...curProj,
-          database: mergedDb,
+          database: nextDb,
           photoHistory: proj.photoHistory?.length ? proj.photoHistory : curProj.photoHistory,
         })
       }
@@ -238,6 +248,76 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
     saveProjectsToStorageNow,
   ])
 
+  // ── Reset & Kirim Ulang ──────────────────────────────────────────────────
+  // Force-push the current project snapshot to all clients (operator + admin +
+  // other MC). Uses force=true so receivers REPLACE their database instead of
+  // merging — this is the ONLY way to make a status regression (e.g. resetting
+  // a `done` student back to `active` for a re-shoot) actually take effect on
+  // the operator side, because mergeDatabases intentionally blocks regressions.
+  //
+  // Also re-emits MC_CALL for the currently active student on this channel so
+  // the operator's live target snaps to the right participant immediately,
+  // even if they missed the original MC_CALL (e.g. they reconnected late).
+  const handleResetAndResend = useCallback(() => {
+    const latestProject = useSaatirilStore.getState().currentProject
+    if (!latestProject) {
+      toast({
+        title: 'Tidak ada proyek aktif',
+        description: 'Tidak ada data untuk dikirim ulang.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setResending(true)
+
+    try {
+      // 1. Force-sync the FULL database snapshot (replace, not merge)
+      emitLocal('SYNC_DB', {
+        project: stripFrameForSync(latestProject),
+        force: true,
+      })
+
+      // 2. Re-emit MC_CALL for the currently active student on this channel
+      const activeStudent = latestProject.database.find(
+        (s) => s.assignedChannel === myChannel && isActiveStatus(s.status),
+      )
+      if (activeStudent) {
+        emitLocal('MC_CALL', {
+          student: { ...activeStudent },
+          channel: myChannel,
+        })
+        toast({
+          title: 'Data dikirim ulang',
+          description: `Snapshot database + target aktif (${activeStudent.nama}) dikirim ke operator kamera Ch.${myChannel}.`,
+        })
+      } else {
+        toast({
+          title: 'Database dikirim ulang',
+          description: `Snapshot penuh dikirim ke semua klien Ch.${myChannel}. Tidak ada peserta aktif saat ini.`,
+        })
+      }
+    } finally {
+      // Brief loading state to give user feedback (and prevent double-tap spam)
+      setTimeout(() => setResending(false), 600)
+    }
+  }, [myChannel, toast])
+
+  // ── Socket: REQUEST_RESEND ───────────────────────────────────────────────
+  // When an operator requests a resend (their target is stale/missing), auto-
+  // trigger our reset & resend so they recover without MC having to notice.
+  useEffect(() => {
+    if (readOnly) return
+    const handleRequestResend = (data: { channel?: number }) => {
+      // Only respond if the request is for our channel (or broadcast)
+      if (data && typeof data.channel === 'number' && data.channel !== myChannelRef.current) return
+      console.log('[SAATIRIL MC] REQUEST_RESEND received from operator — auto-resending')
+      handleResetAndResend()
+    }
+    onLocal('REQUEST_RESEND', handleRequestResend)
+    return () => { offLocal('REQUEST_RESEND', handleRequestResend) }
+  }, [readOnly, handleResetAndResend])
+
   // ── Render helpers
   const renderCallButton = () => {
     if (readOnly) {
@@ -306,6 +386,34 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
       >
         <Users className="size-5" />
         ANTREAN HABIS
+      </Button>
+    )
+  }
+
+  // ── Reset & Kirim Ulang button (recovery action)
+  // Always available (except readOnly) — lets MC force-push the current
+  // participant data to the camera operator when the live target on the
+  // operator side is stale, missing, or stuck on the wrong participant.
+  const renderResendButton = () => {
+    if (readOnly) return null
+    return (
+      <Button
+        onClick={handleResetAndResend}
+        disabled={resending}
+        className={`w-full font-semibold transition-all duration-200 active:scale-[0.98] ${isMobile ? 'h-10 text-xs' : 'h-11 text-sm hover:scale-[1.01]'}`}
+        style={{
+          backgroundColor: resending ? THEME.panel : `${THEME.panel}`,
+          color: THEME.gold,
+          border: `1.5px solid ${THEME.gold}66`,
+        }}
+        title="Kirim ulang snapshot database + target aktif ke operator kamera"
+      >
+        {resending ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <RefreshCw className="size-4" />
+        )}
+        {resending ? 'MENGIRIM ULANG…' : 'RESET & KIRIM ULANG KE KAMERA'}
       </Button>
     )
   }
@@ -457,6 +565,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
             )}
 
             {renderCallButton()}
+            {renderResendButton()}
           </CardContent>
         </Card>
 
@@ -579,6 +688,7 @@ export function McPanel({ readOnly = false }: { readOnly?: boolean }) {
           )}
 
           {renderCallButton()}
+          {renderResendButton()}
         </CardContent>
       </Card>
 

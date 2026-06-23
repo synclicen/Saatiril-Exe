@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, stripFrameForSync } from '@/store/use-saatiril-store'
+import { useSaatirilStore, type AppTab, type Role, type Project, mergeDatabases, replaceDatabase, stripFrameForSync } from '@/store/use-saatiril-store'
 import { connectSocket, onLocal, offLocal, emitLocal, getSocket, getConnectionHealth } from '@/lib/socket'
 
 import AdminDashboard from '@/components/saatiril/admin-dashboard'
@@ -224,17 +224,21 @@ export function MainApp() {
 
   // ── Socket event listeners (stable — no currentProject in deps) ──────────
   useEffect(() => {
-    const handleSyncDb = (data: { project: Project }) => {
+    const handleSyncDb = (data: { project: Project; force?: boolean }) => {
       const role = myRoleRef.current
       const curProj = currentProjectRef.current
 
       if (role !== 'admin' && data.project) {
         // For MC/Operator: merge incoming database with local (prevents data regression)
+        // unless force=true (MC "Reset & Kirim Ulang"), which REPLACES the database
+        // so status regressions (done → active) take effect.
         if (curProj && data.project.id === curProj.id) {
-          const mergedDb = mergeDatabases(curProj.database, data.project.database)
+          const nextDb = data.force
+            ? replaceDatabase(curProj.database, data.project.database)
+            : mergeDatabases(curProj.database, data.project.database)
           updateCurrentProject({
             ...curProj,
-            database: mergedDb,
+            database: nextDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
           })
         } else {
@@ -242,11 +246,14 @@ export function MainApp() {
         }
       } else if (role === 'admin' && data.project) {
         // For admin: merge database with incoming (prevents channel data overwrite in dual mode)
+        // unless force=true, which REPLACES the database.
         if (curProj && data.project.id === curProj.id) {
-          const mergedDb = mergeDatabases(curProj.database, data.project.database)
+          const nextDb = data.force
+            ? replaceDatabase(curProj.database, data.project.database)
+            : mergeDatabases(curProj.database, data.project.database)
           updateCurrentProject({
             ...curProj,
-            database: mergedDb,
+            database: nextDb,
             photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : curProj.photoHistory,
           })
         }

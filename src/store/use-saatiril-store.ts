@@ -93,6 +93,13 @@ function getStatusPriority(status: StudentStatus): number {
  * Merge two student databases, keeping the "most advanced" status for each student.
  * This prevents data regression when SYNC_DB payloads from different channels
  * overwrite each other's progress in dual mode.
+ *
+ * IMPORTANT: This merge intentionally BLOCKS status regression (e.g. done → active).
+ * When an MC needs to RESET a participant and re-send their data to the operator,
+ * the sender MUST set `force: true` on the SYNC_DB payload. Receivers then call
+ * `replaceDatabase` instead of `mergeDatabases` so the reset actually takes effect.
+ *
+ * @see replaceDatabase — used when SYNC_DB payload has `force: true`
  */
 export function mergeDatabases(
   localDb: Student[],
@@ -120,6 +127,36 @@ export function mergeDatabases(
   }
 
   return Array.from(studentMap.values())
+}
+
+/**
+ * Force-replace the local database with the incoming one.
+ *
+ * Used when a sender (typically MC doing a "Reset & Kirim Ulang") needs to push
+ * an authoritative snapshot that MUST override local state — including status
+ * regressions (e.g. resetting a `done` student back to `active` for a re-shoot).
+ *
+ * Any local student NOT present in the incoming database is dropped, because the
+ * sender's snapshot is treated as the source of truth for this force-sync.
+ */
+export function replaceDatabase(
+  localDb: Student[],
+  incomingDb: Student[],
+): Student[] {
+  // Use incoming as the source of truth; preserve any local students not in
+  // incoming (defensive — shouldn't normally happen, but avoids data loss if a
+  // partial payload ever arrives).
+  const incomingMap = new Map<string, Student>()
+  for (const s of incomingDb) {
+    incomingMap.set(s.id, s)
+  }
+  const result: Student[] = [...incomingDb]
+  for (const s of localDb) {
+    if (!incomingMap.has(s.id)) {
+      result.push(s)
+    }
+  }
+  return result
 }
 
 /**

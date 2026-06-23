@@ -35,6 +35,7 @@ import {
   Brain,
   Sparkles,
   Zap,
+  RefreshCw,
 } from 'lucide-react'
 import {
   useSaatirilStore,
@@ -42,6 +43,7 @@ import {
   type StudentStatus,
   type PhotoHistoryItem,
   mergeDatabases,
+  replaceDatabase,
   stripFrameForSync,
   preserveFrameOnSync,
 } from '@/store/use-saatiril-store'
@@ -49,6 +51,7 @@ import { emitLocal, onLocal, offLocal } from '@/lib/socket'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { NetworkQualityBadge } from '@/components/saatiril/network-quality-badge'
 import { useAIDetection, type AIMomentEvent } from '@/hooks/use-ai-detection'
+import { useToast } from '@/hooks/use-toast'
 
 // ─── Theme tokens ───────────────────────────────────────────────────────────
 const THEME = {
@@ -152,11 +155,15 @@ interface SyncDbData {
     database: Student[]
     photoHistory: PhotoHistoryItem[]
   }
+  // When true, receivers REPLACE their database instead of merging.
+  // Used by MC "Reset & Kirim Ulang" so status regressions (done → active) take effect.
+  force?: boolean
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const isMobile = useIsMobile()
+  const { toast } = useToast()
 
   // ── Store ────────────────────────────────────────────────────────────────
   const currentProject = useSaatirilStore((s) => s.currentProject)
@@ -178,6 +185,7 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [sending, setSending] = useState(false)
   const [cameraDims, setCameraDims] = useState({ width: 0, height: 0 })
   const [showQueueOnMobile, setShowQueueOnMobile] = useState(false)
+  const [requestingResend, setRequestingResend] = useState(false)
   const isCapturingRef = useRef(false)
 
   // ── AI auto-capture ──────────────────────────────────────────────────────
@@ -426,9 +434,14 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     const handleSyncDb = (data: SyncDbData) => {
       const proj = currentProjectRef.current
       if (!proj) return
-      const mergedDb = mergeDatabases(proj.database, data.project.database)
+      // force=true (MC "Reset & Kirim Ulang") → REPLACE database so status
+      // regressions (done → active) take effect. Otherwise merge to preserve
+      // dual-channel progress.
+      const nextDb = data.force
+        ? replaceDatabase(proj.database, data.project.database)
+        : mergeDatabases(proj.database, data.project.database)
       const mergedConfig = preserveFrameOnSync(data.project.config, proj.config)
-      updateCurrentProject({ ...proj, database: mergedDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
+      updateCurrentProject({ ...proj, database: nextDb, photoHistory: data.project.photoHistory?.length ? data.project.photoHistory : proj.photoHistory, config: mergedConfig })
       const ch = myChannelRef.current
       const activeStudent = data.project.database.find(
         (s: Student) => s.assignedChannel === ch && isActiveStatus(s.status),
@@ -534,6 +547,26 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
     },
     [myChannel, addOpCapturedPhoto, updateStudentStatus, saveProjectsToStorageNow, resetOpState],
   )
+
+  // ── Request resend from MC ───────────────────────────────────────────────
+  // When the operator's live target is stale, missing, or stuck on the wrong
+  // participant (e.g. MC already called someone else but we didn't receive it,
+  // or our database didn't update because mergeDatabases blocked a regression),
+  // the operator can request MC to force-push a fresh snapshot.
+  //
+  // MC listens for REQUEST_RESEND and auto-runs its "Reset & Kirim Ulang"
+  // handler, which emits SYNC_DB { force: true } + MC_CALL for the active
+  // student. This recovers the operator's state without MC having to notice.
+  const handleRequestResend = useCallback(() => {
+    setRequestingResend(true)
+    emitLocal('REQUEST_RESEND', { channel: myChannel })
+    toast({
+      title: 'Permintaan terkirim',
+      description: `Meminta MC Ch.${myChannel} mengirim ulang data peserta. Tunggu sebentar…`,
+    })
+    // Give user feedback; MC should respond within a second or two.
+    setTimeout(() => setRequestingResend(false), 1200)
+  }, [myChannel, toast])
 
   // ── Photo capture logic ──────────────────────────────────────────────────
   const handleCapture = useCallback(() => {
@@ -1007,6 +1040,30 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
             </div>
           )}
 
+          {/* Request resend from MC — recovery when target is stale/missing */}
+          {!readOnly && (
+            <div className="px-3 pb-1.5">
+              <Button
+                onClick={handleRequestResend}
+                disabled={requestingResend || sending}
+                className="w-full h-8 text-[10px] font-semibold"
+                style={{
+                  backgroundColor: THEME.bg,
+                  color: THEME.gold,
+                  border: `1.5px solid ${THEME.gold}55`,
+                }}
+                title="Minta MC mengirim ulang data peserta jika target di sini tidak update"
+              >
+                {requestingResend ? (
+                  <Loader2 className="size-3 mr-1.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3 mr-1.5" />
+                )}
+                {requestingResend ? 'MEMINTA…' : 'MINTA ULANG DATA DARI MC'}
+              </Button>
+            </div>
+          )}
+
           {/* Capture button */}
           <div className="px-3 pb-2 pt-1">
             {renderCaptureButton('large')}
@@ -1117,6 +1174,28 @@ export function OperatorPanel({ readOnly = false }: { readOnly?: boolean }) {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Request resend from MC — recovery when target is stale/missing */}
+            {!readOnly && (
+              <Button
+                onClick={handleRequestResend}
+                disabled={requestingResend || sending}
+                className="mt-2 w-full h-8 text-[11px] font-semibold transition-all duration-200 active:scale-[0.98]"
+                style={{
+                  backgroundColor: THEME.panel,
+                  color: THEME.gold,
+                  border: `1.5px solid ${THEME.gold}55`,
+                }}
+                title="Minta MC mengirim ulang data peserta jika target di sini tidak update"
+              >
+                {requestingResend ? (
+                  <Loader2 className="size-3 mr-1.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3 mr-1.5" />
+                )}
+                {requestingResend ? 'MEMINTA…' : 'MINTA ULANG DATA DARI MC'}
+              </Button>
+            )}
           </CardContent>
         </Card>
 
